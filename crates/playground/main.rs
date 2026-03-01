@@ -6,6 +6,7 @@ use gpui::{
 };
 use gpui_gfm::render::{MarkdownRenderOptions, MarkdownTheme};
 use input::*;
+use std::sync::Arc;
 
 actions!(playground, [Quit, RenderMarkdown]);
 
@@ -55,6 +56,8 @@ This is on a new line.
 - [Inline link](https://github.com)
 - [Link with title](https://github.com "GitHub")
 - <https://github.com> (autolink §6.9)
+- **Bold** text, then [a link](https://example.com), then normal text.
+- Mixed: *italic* [link1](https://a.com) middle [link2](https://b.com) end.
 
 ## Images (§6.7)
 
@@ -171,6 +174,8 @@ Centered content via HTML align attribute.
 | `code_font_family` | Menlo (monospace) |
 | `image_base_url` | `https://raw.githubusercontent.com/owner/repo/main` |
 | `expand_code_blocks` | `false` (scroll cap at 400px) |
+| `on_link` | Custom handler: logs URL to stdout |
+| `details_state` | Shared state for toggle persistence |
 
 ---
 
@@ -354,6 +359,9 @@ fn main() {
             options: MarkdownRenderOptions {
               theme: Some(MarkdownTheme::dark()),
               image_base_url: Some("https://raw.githubusercontent.com/owner/repo/main".into()),
+              on_link: Some(Arc::new(|url, _window, _cx| {
+                println!("[on_link] clicked: {url}");
+              })),
               ..Default::default()
             },
             focus_handle: cx.focus_handle(),
