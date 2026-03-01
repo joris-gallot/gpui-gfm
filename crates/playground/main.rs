@@ -4,6 +4,7 @@ use gpui::{
   App, Application, Bounds, Context, Entity, FocusHandle, Focusable, KeyBinding, MouseButton,
   SharedString, Window, WindowBounds, WindowOptions, actions, div, prelude::*, px, size,
 };
+use gpui_gfm::github::GithubIssueReferenceContext;
 use gpui_gfm::render::{MarkdownRenderOptions, MarkdownTheme};
 use input::*;
 use std::sync::Arc;
@@ -166,6 +167,18 @@ Centered content via HTML align attribute.
 
 </div>
 
+## GitHub Issue Auto-linking
+
+With `github_issue_reference_context` = `zed-industries/zed`:
+
+- See #123 for the bug report.
+- Fixed in #42, related to #99.
+- In code: `#456` (not linked).
+- In a word: foo#789 (not linked).
+- HTML entity &#123; (not linked).
+- Already a link: [#100](https://github.com/zed-industries/zed/issues/100) (not double-linked).
+- **Bold #55** works too.
+
 ## Render Options Demo
 
 | Option | Value |
@@ -176,6 +189,7 @@ Centered content via HTML align attribute.
 | `expand_code_blocks` | `false` (scroll cap at 400px) |
 | `on_link` | Custom handler: logs URL to stdout |
 | `details_state` | Shared state for toggle persistence |
+| `github_issue_reference_context` | `zed-industries/zed` (auto-links `#123`) |
 
 ---
 
@@ -362,6 +376,10 @@ fn main() {
               on_link: Some(Arc::new(|url, _window, _cx| {
                 println!("[on_link] clicked: {url}");
               })),
+              github_issue_reference_context: Some(GithubIssueReferenceContext {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+              }),
               ..Default::default()
             },
             focus_handle: cx.focus_handle(),

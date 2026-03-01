@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use gpui::{AnyElement, App, Hsla, SharedString};
 
+use crate::github::GithubIssueReferenceContext;
 use crate::types::ParsedMarkdown;
 
 /// A link click handler.
@@ -198,6 +199,11 @@ pub struct MarkdownRenderOptions {
   pub expand_code_blocks: bool,
   /// Base URL for resolving relative image paths.
   pub image_base_url: Option<SharedString>,
+  /// Context for auto-linking GitHub issue references (`#123`).
+  ///
+  /// When set, bare `#123` patterns in text are converted to clickable links
+  /// pointing to `https://github.com/{owner}/{repo}/issues/{num}`.
+  pub github_issue_reference_context: Option<GithubIssueReferenceContext>,
   /// Persistent state for `<details>` toggle.
   ///
   /// Created automatically on first use. Persists across re-renders so
@@ -223,6 +229,14 @@ impl MarkdownRenderOptions {
 
   pub fn with_image_base_url(mut self, url: impl Into<SharedString>) -> Self {
     self.image_base_url = Some(url.into());
+    self
+  }
+
+  pub fn with_github_issue_context(mut self, owner: impl Into<Arc<str>>, repo: impl Into<Arc<str>>) -> Self {
+    self.github_issue_reference_context = Some(GithubIssueReferenceContext {
+      owner: owner.into(),
+      repo: repo.into(),
+    });
     self
   }
 

@@ -31,6 +31,15 @@ pub fn render_inline_text(
   options: &MarkdownRenderOptions,
   cx: &App,
 ) -> AnyElement {
+  // Expand GitHub issue references (#123 → links) if configured.
+  let expanded;
+  let inlines = if let Some(gh) = &options.github_issue_reference_context {
+    expanded = crate::github::expand_issue_references(inlines, gh);
+    &expanded
+  } else {
+    inlines
+  };
+
   if options.on_link.is_some() {
     render_inline_segmented(inlines, options, cx)
   } else {
