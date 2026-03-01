@@ -335,10 +335,7 @@ mod tests {
       Block::Table(table) => {
         assert_eq!(table.headers.len(), 2);
         assert_eq!(table.rows.len(), 2);
-        assert_eq!(
-          inline_to_plain_text(&table.headers[0]),
-          "H1"
-        );
+        assert_eq!(inline_to_plain_text(&table.headers[0]), "H1");
       }
       _ => panic!("expected table"),
     }
@@ -349,7 +346,9 @@ mod tests {
     let md = "<div align=\"center\">\n\n**centered bold**\n\n</div>";
     let blocks = parse_comrak(md);
     assert!(
-      blocks.iter().any(|b| matches!(b, Block::Aligned { center: true, .. })),
+      blocks
+        .iter()
+        .any(|b| matches!(b, Block::Aligned { center: true, .. })),
       "expected centered aligned block, got: {blocks:?}"
     );
   }

@@ -232,7 +232,11 @@ impl MarkdownRenderOptions {
     self
   }
 
-  pub fn with_github_issue_context(mut self, owner: impl Into<Arc<str>>, repo: impl Into<Arc<str>>) -> Self {
+  pub fn with_github_issue_context(
+    mut self,
+    owner: impl Into<Arc<str>>,
+    repo: impl Into<Arc<str>>,
+  ) -> Self {
     self.github_issue_reference_context = Some(GithubIssueReferenceContext {
       owner: owner.into(),
       repo: repo.into(),

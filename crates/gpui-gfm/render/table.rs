@@ -15,11 +15,7 @@ const TABLE_CELL_HORIZONTAL_PADDING_PX: f32 = 24.0;
 const TABLE_INLINE_CHAR_WIDTH_PX: f32 = 7.2;
 
 /// Render a GFM table.
-pub fn render_table(
-  table: &Table,
-  options: &MarkdownRenderOptions,
-  cx: &App,
-) -> AnyElement {
+pub fn render_table(table: &Table, options: &MarkdownRenderOptions, cx: &App) -> AnyElement {
   let theme = options.theme();
   let column_count = table
     .rows
@@ -57,10 +53,7 @@ pub fn render_table(
   // Body rows
   let mut body = div().flex().flex_col();
   for row in &table.rows {
-    let mut row_el = div()
-      .flex()
-      .border_t_1()
-      .border_color(theme.border);
+    let mut row_el = div().flex().border_t_1().border_color(theme.border);
     for (col, width) in column_widths.iter().enumerate().take(column_count) {
       let cell = row.get(col).map_or(&[][..], |cell| cell.as_slice());
       row_el = row_el.child(
@@ -84,8 +77,7 @@ pub fn render_table(
   }
 
   // Scroll container
-  let table_id: SharedString =
-    format!("md-table-{:x}", table as *const Table as usize).into();
+  let table_id: SharedString = format!("md-table-{:x}", table as *const Table as usize).into();
 
   div()
     .id(table_id)

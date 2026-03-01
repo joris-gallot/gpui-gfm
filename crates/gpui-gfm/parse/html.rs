@@ -268,10 +268,7 @@ mod tests {
       extract_html_attribute(tag, "src"),
       Some("hello.png".to_string())
     );
-    assert_eq!(
-      extract_html_attribute(tag, "alt"),
-      Some("test".to_string())
-    );
+    assert_eq!(extract_html_attribute(tag, "alt"), Some("test".to_string()));
   }
 
   #[test]
@@ -286,9 +283,7 @@ mod tests {
   #[test]
   fn centered_div_detection() {
     assert!(is_centered_div_open(r#"<div align="center">"#));
-    assert!(is_centered_div_open(
-      r#"<div style="text-align: center">"#
-    ));
+    assert!(is_centered_div_open(r#"<div style="text-align: center">"#));
     assert!(!is_centered_div_open(r#"<div class="foo">"#));
   }
 

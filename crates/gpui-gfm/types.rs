@@ -16,10 +16,7 @@ pub enum Block {
   Paragraph(Vec<Inline>),
 
   /// A heading with level (1–6) and inline content.
-  Heading {
-    level: u8,
-    content: Vec<Inline>,
-  },
+  Heading { level: u8, content: Vec<Inline> },
 
   /// An ordered or unordered list.
   List(List),
@@ -40,10 +37,7 @@ pub enum Block {
   Details(Details),
 
   /// Content wrapped in a centered `<div>`.
-  Aligned {
-    center: bool,
-    blocks: Vec<Block>,
-  },
+  Aligned { center: bool, blocks: Vec<Block> },
 }
 
 /// A fenced or indented code block.
@@ -189,9 +183,7 @@ fn inline_to_plain_text_inner(inlines: &[Inline], out: &mut String) {
       Inline::Code(value) => out.push_str(value),
       Inline::SoftBreak => out.push(' '),
       Inline::HardBreak => out.push('\n'),
-      Inline::Strong(children)
-      | Inline::Emphasis(children)
-      | Inline::Strikethrough(children) => {
+      Inline::Strong(children) | Inline::Emphasis(children) | Inline::Strikethrough(children) => {
         inline_to_plain_text_inner(children, out);
       }
       Inline::Link { content, .. } => {
