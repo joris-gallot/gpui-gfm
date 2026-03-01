@@ -2,6 +2,7 @@
 
 pub mod blocks;
 pub mod code_block;
+pub mod image;
 pub mod inline;
 pub mod table;
 
@@ -80,6 +81,8 @@ pub struct MarkdownTheme {
   pub accent: Hsla,
   /// Font family for code blocks and inline code.
   pub code_font_family: SharedString,
+  /// Whether this is a dark theme (used for dark/light image URL selection).
+  pub is_dark: bool,
 }
 
 impl Default for MarkdownTheme {
@@ -135,6 +138,7 @@ impl MarkdownTheme {
         a: 1.0,
       },
       code_font_family: "Menlo".into(),
+      is_dark: true,
     }
   }
 
@@ -184,9 +188,16 @@ impl MarkdownTheme {
         a: 1.0,
       },
       code_font_family: "Menlo".into(),
+      is_dark: false,
     }
   }
 }
+
+/// A function that provides a custom [`gpui::ImageSource`] for a resolved URL.
+///
+/// When set on [`MarkdownRenderOptions`], this is called instead of using
+/// `gpui::img(url)` directly. Useful for auth headers, custom caching, etc.
+pub type ImageLoaderFn = dyn Fn(&str) -> gpui::ImageSource + Send + Sync;
 
 /// Options for rendering markdown.
 #[derive(Clone, Default)]
@@ -204,6 +215,12 @@ pub struct MarkdownRenderOptions {
   /// When set, bare `#123` patterns in text are converted to clickable links
   /// pointing to `https://github.com/{owner}/{repo}/issues/{num}`.
   pub github_issue_reference_context: Option<GithubIssueReferenceContext>,
+  /// Custom image source provider.
+  ///
+  /// When set, this function is called with the resolved image URL to produce
+  /// a [`gpui::ImageSource`]. When `None`, `gpui::img(url)` is used directly
+  /// (which requires an HTTP client registered on the GPUI `App`).
+  pub image_loader: Option<Arc<ImageLoaderFn>>,
   /// Persistent state for `<details>` toggle.
   ///
   /// Created automatically on first use. Persists across re-renders so
@@ -241,6 +258,11 @@ impl MarkdownRenderOptions {
       owner: owner.into(),
       repo: repo.into(),
     });
+    self
+  }
+
+  pub fn with_image_loader(mut self, loader: Arc<ImageLoaderFn>) -> Self {
+    self.image_loader = Some(loader);
     self
   }
 

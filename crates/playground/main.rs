@@ -62,10 +62,17 @@ This is on a new line.
 
 ## Images (§6.7)
 
+**Inline badge** (rendered as 18px-tall image): Check build: ![CI](https://github.com/zed-industries/zed/actions/workflows/ci.yml/badge.svg)
+
+**Block image** (paragraph = single image → full width):
+
+![Zed Editor](https://zed.dev/img/og-image.png)
+
+Mixed text with inline image: status ![badge](https://img.shields.io/badge/build-passing-green) and more text.
+
 With `image_base_url` = `https://raw.githubusercontent.com/owner/repo/main`:
 
 ![Relative image](images/logo.png)
-![Absolute image](https://cdn.example.com/badge.svg)
 
 ## Inline Code (§6.1)
 
@@ -185,9 +192,10 @@ With `github_issue_reference_context` = `zed-industries/zed`:
 
 | Option | Value |
 |--------|-------|
-| `theme` | `MarkdownTheme::dark()` |
+| `theme` | `MarkdownTheme::dark()` (`is_dark: true`) |
 | `code_font_family` | Menlo (monospace) |
 | `image_base_url` | `https://raw.githubusercontent.com/owner/repo/main` |
+| `image_loader` | `None` (uses gpui's built-in `img()` loader) |
 | `expand_code_blocks` | `false` (scroll cap at 400px) |
 | `on_link` | Custom handler: logs URL to stdout |
 | `details_state` | Shared state for toggle persistence |

@@ -9,7 +9,7 @@ use crate::types::*;
 
 use super::MarkdownRenderOptions;
 
-/// A segment of inline content — either plain text or a clickable link.
+/// A segment of inline content — either plain text, a clickable link, or an image.
 #[derive(Debug)]
 enum InlineSegment {
   /// Plain (non-link) text with its runs.
@@ -19,6 +19,13 @@ enum InlineSegment {
     text: String,
     runs: Vec<TextRun>,
     url: String,
+  },
+  /// An inline image segment.
+  Image {
+    url: String,
+    alt: String,
+    width: Option<String>,
+    height: Option<String>,
   },
 }
 
@@ -40,11 +47,25 @@ pub fn render_inline_text(
     inlines
   };
 
-  if options.on_link.is_some() {
+  if options.on_link.is_some() || inlines_contain_image(inlines) {
     render_inline_segmented(inlines, options, cx)
   } else {
     render_inline_flat(inlines, options, cx)
   }
+}
+
+/// Check if any inline (recursively) contains an image.
+fn inlines_contain_image(inlines: &[Inline]) -> bool {
+  inlines.iter().any(|inline| match inline {
+    Inline::Image { .. } => true,
+    Inline::Strong(children)
+    | Inline::Emphasis(children)
+    | Inline::Strikethrough(children)
+    | Inline::Link {
+      content: children, ..
+    } => inlines_contain_image(children),
+    _ => false,
+  })
 }
 
 /// Fast path: no link handler → single StyledText (no segmentation needed).
@@ -130,6 +151,22 @@ fn render_inline_segmented(
 
           container = container.child(link_div);
         }
+      }
+      InlineSegment::Image {
+        url,
+        alt,
+        width,
+        height,
+      } => {
+        container = container.child(super::image::render_inline_image(
+          &url,
+          &alt,
+          width.as_deref(),
+          height.as_deref(),
+          None,
+          None,
+          options,
+        ));
       }
     }
   }
@@ -225,12 +262,29 @@ fn collect_segments_inner(
         });
       }
 
-      Inline::Image { alt, url, .. } => {
-        let _resolved_url = resolve_url(url, options);
-        if !alt.is_empty() {
-          let run = make_text_run(0..alt.len(), ctx, theme);
-          push_to_current_segment(segments, ctx, alt.clone(), run);
-        }
+      Inline::Image {
+        url,
+        alt,
+        width,
+        height,
+        dark_url,
+        light_url,
+        ..
+      } => {
+        let theme = options.theme();
+        let themed = super::image::select_image_url(
+          url,
+          dark_url.as_deref(),
+          light_url.as_deref(),
+          theme.is_dark,
+        );
+        let resolved = resolve_url(themed, options);
+        segments.push(InlineSegment::Image {
+          url: resolved,
+          alt: alt.clone(),
+          width: width.clone(),
+          height: height.clone(),
+        });
       }
     }
   }
@@ -249,6 +303,7 @@ fn push_to_current_segment(
     || match segments.last() {
       Some(InlineSegment::Link { .. }) => !ctx.link,
       Some(InlineSegment::Text { .. }) => ctx.link,
+      Some(InlineSegment::Image { .. }) => true, // always start new segment after image
       None => true,
     };
 
@@ -274,6 +329,10 @@ fn push_to_current_segment(
       run.len = value.len();
       text.push_str(&value);
       runs.push(run);
+    }
+    InlineSegment::Image { .. } => {
+      // Should not happen — we create a new Text/Link segment above.
+      unreachable!("push_to_current_segment called with Image as last segment");
     }
   }
 }
@@ -640,6 +699,7 @@ mod tests {
       .filter(|s| match s {
         InlineSegment::Text { text, .. } => !text.is_empty(),
         InlineSegment::Link { text, .. } => !text.is_empty(),
+        InlineSegment::Image { .. } => true, // images are always non-empty
       })
       .collect()
   }

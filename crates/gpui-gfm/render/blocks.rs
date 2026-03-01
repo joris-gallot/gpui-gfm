@@ -6,6 +6,7 @@ use crate::types::*;
 
 use super::MarkdownRenderOptions;
 use super::code_block::render_code_block;
+use super::image::{is_block_image, render_block_image};
 use super::inline::render_inline_text;
 use super::table::render_table;
 
@@ -45,12 +46,18 @@ fn render_block(
   let theme = options.theme();
 
   match block {
-    Block::Paragraph(inlines) => div()
-      .whitespace_normal()
-      .text_sm()
-      .text_color(theme.foreground)
-      .child(render_inline_text(inlines, options, cx))
-      .into_any_element(),
+    Block::Paragraph(inlines) => {
+      if is_block_image(inlines) {
+        render_block_image(inlines, options, cx)
+      } else {
+        div()
+          .whitespace_normal()
+          .text_sm()
+          .text_color(theme.foreground)
+          .child(render_inline_text(inlines, options, cx))
+          .into_any_element()
+      }
+    }
 
     Block::Heading { level, content } => {
       let el = div().text_color(theme.foreground);
