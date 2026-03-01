@@ -9,7 +9,7 @@ use gpui_gfm::render::{MarkdownRenderOptions, MarkdownTheme};
 use input::*;
 use std::sync::Arc;
 
-actions!(playground, [Quit, RenderMarkdown]);
+actions!(playground, [Quit, RenderMarkdown, FetchReadme]);
 
 const SAMPLE_MARKDOWN: &str = r#"# gpui-gfm playground
 
@@ -208,9 +208,11 @@ With `github_issue_reference_context` = `zed-industries/zed`:
 
 struct MarkdownPlayground {
   text_input: Entity<TextInput>,
+  url_input: Entity<TextInput>,
   rendered_source: SharedString,
   options: MarkdownRenderOptions,
   focus_handle: FocusHandle,
+  is_fetching: bool,
 }
 
 impl MarkdownPlayground {
@@ -225,6 +227,179 @@ impl MarkdownPlayground {
     self.rendered_source = source.into();
     cx.notify();
   }
+
+  fn fetch_readme(&mut self, _: &FetchReadme, _window: &mut Window, cx: &mut Context<Self>) {
+    let url_text = self.url_input.read(cx).text().to_string();
+    let (owner, repo) = match parse_github_url(&url_text) {
+      Some(pair) => pair,
+      None => return,
+    };
+
+    self.is_fetching = true;
+    cx.notify();
+
+    let text_input = self.text_input.clone();
+
+    let raw_url = format!("https://raw.githubusercontent.com/{owner}/{repo}/HEAD/README.md");
+    let image_base = format!("https://raw.githubusercontent.com/{owner}/{repo}/HEAD");
+    let image_base_for_thread = image_base.clone();
+    let owner_clone = owner.clone();
+    let repo_clone = repo.clone();
+
+    cx.spawn(async move |this, cx| {
+      let result = std::thread::spawn(move || {
+        let body = ureq::get(&raw_url).call()?.body_mut().read_to_string()?;
+        // Some READMEs redirect to another file, e.g. "packages/ai/README.md"
+        let body = maybe_follow_readme_redirect(&image_base_for_thread, &body)?;
+        Ok::<String, Box<dyn std::error::Error + Send + Sync>>(body)
+      })
+      .join()
+      .unwrap();
+
+      this
+        .update(cx, |this, cx| {
+          this.is_fetching = false;
+          match result {
+            Ok(markdown) => {
+              text_input.update(cx, |input, cx| {
+                input.set_content(markdown.clone(), cx);
+              });
+              this.rendered_source = markdown.into();
+              this.options.image_base_url = Some(image_base.into());
+              this.options.github_issue_reference_context = Some(GithubIssueReferenceContext {
+                owner: owner_clone.into(),
+                repo: repo_clone.into(),
+              });
+            }
+            Err(e) => {
+              let error_md = format!("# Error fetching README\n\n```\n{e}\n```");
+              text_input.update(cx, |input, cx| {
+                input.set_content(error_md.clone(), cx);
+              });
+              this.rendered_source = error_md.into();
+            }
+          }
+          cx.notify();
+        })
+        .ok();
+    })
+    .detach();
+  }
+
+  fn render_toolbar(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
+    let theme = self.options.theme();
+    div()
+      .flex()
+      .items_center()
+      .justify_between()
+      .gap_3()
+      .px_3()
+      .py_2()
+      .border_b_1()
+      .border_color(theme.border)
+      // Title
+      .child(
+        div()
+          .text_sm()
+          .font_weight(gpui::FontWeight::BOLD)
+          .flex_shrink_0()
+          .child("gpui-gfm playground"),
+      )
+      // URL input
+      .child(
+        div()
+          .flex()
+          .items_center()
+          .gap_2()
+          .child(
+            div()
+              .w(px(400.0))
+              .flex()
+              .items_center()
+              .px_2()
+              .h(px(26.0))
+              .rounded_md()
+              .border_1()
+              .border_color(theme.border)
+              .bg(theme.code_background)
+              .text_sm()
+              .overflow_x_hidden()
+              .child(self.url_input.clone()),
+          )
+          .child(if self.is_fetching {
+            div()
+              .text_xs()
+              .text_color(theme.muted_foreground)
+              .flex_shrink_0()
+              .child("Fetching…")
+              .into_any_element()
+          } else {
+            div().into_any_element()
+          }),
+      )
+      // Render button
+      .child(
+        div()
+          .id("render-btn")
+          .px_3()
+          .py_1()
+          .rounded_md()
+          .bg(theme.accent)
+          .text_sm()
+          .text_color(gpui::white())
+          .cursor_pointer()
+          .flex_shrink_0()
+          .hover(|s| s.opacity(0.85))
+          .on_mouse_down(MouseButton::Left, cx.listener(Self::on_render_click))
+          .child("Render ⏎"),
+      )
+      .into_any_element()
+  }
+}
+
+/// Parse a GitHub URL like `https://github.com/owner/repo` into `(owner, repo)`.
+fn parse_github_url(url: &str) -> Option<(String, String)> {
+  let url = url.trim().trim_end_matches('/');
+  // Support: https://github.com/owner/repo or github.com/owner/repo
+  let path = url
+    .strip_prefix("https://github.com/")
+    .or_else(|| url.strip_prefix("http://github.com/"))
+    .or_else(|| url.strip_prefix("github.com/"))?;
+  let parts: Vec<&str> = path.splitn(3, '/').collect();
+  if parts.len() >= 2 && !parts[0].is_empty() && !parts[1].is_empty() {
+    Some((parts[0].to_string(), parts[1].to_string()))
+  } else {
+    None
+  }
+}
+
+/// If the fetched README content looks like a redirect (a single relative path
+/// to another `.md` file), fetch that file instead. Returns the final content.
+fn maybe_follow_readme_redirect(
+  base_url: &str,
+  content: &str,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+  let trimmed = content.trim();
+  // Heuristic: single line, ends with .md (case-insensitive), no spaces except
+  // maybe in the path, and looks like a relative path (not a full sentence).
+  if trimmed.lines().count() <= 1
+    && trimmed.to_ascii_lowercase().ends_with(".md")
+    && !trimmed.starts_with('#')
+    && !trimmed.starts_with('!')
+    && !trimmed.starts_with('[')
+    && !trimmed.starts_with('<')
+    && trimmed.len() < 256
+  {
+    let redirect_path = trimmed.trim_start_matches('/');
+    let redirect_url = format!("{base_url}/{redirect_path}");
+    let body = ureq::get(&redirect_url)
+      .call()?
+      .body_mut()
+      .read_to_string()?;
+    Ok(body)
+  } else {
+    Ok(content.to_string())
+  }
 }
 
 impl Focusable for MarkdownPlayground {
@@ -235,6 +410,7 @@ impl Focusable for MarkdownPlayground {
 
 impl Render for MarkdownPlayground {
   fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    let toolbar = self.render_toolbar(cx);
     let theme = self.options.theme();
     let rendered = gpui_gfm::render_markdown(&self.rendered_source, &self.options, cx);
 
@@ -242,42 +418,14 @@ impl Render for MarkdownPlayground {
       .key_context("Playground")
       .track_focus(&self.focus_handle(cx))
       .on_action(cx.listener(Self::render_markdown))
+      .on_action(cx.listener(Self::fetch_readme))
       .flex()
       .flex_col()
       .size_full()
       .bg(theme.background)
       .text_color(theme.foreground)
       // Toolbar
-      .child(
-        div()
-          .flex()
-          .items_center()
-          .justify_between()
-          .px_3()
-          .py_2()
-          .border_b_1()
-          .border_color(theme.border)
-          .child(
-            div()
-              .text_sm()
-              .font_weight(gpui::FontWeight::BOLD)
-              .child("gpui-gfm playground"),
-          )
-          .child(
-            div()
-              .id("render-btn")
-              .px_3()
-              .py_1()
-              .rounded_md()
-              .bg(theme.accent)
-              .text_sm()
-              .text_color(gpui::white())
-              .cursor_pointer()
-              .hover(|s| s.opacity(0.85))
-              .on_mouse_down(MouseButton::Left, cx.listener(Self::on_render_click))
-              .child("Render ⏎"),
-          ),
-      )
+      .child(toolbar)
       // Split pane: input left, render right
       .child(
         div()
@@ -377,8 +525,16 @@ fn main() {
         },
         |_, cx| {
           let text_input = cx.new(|cx| TextInput::new(cx, SAMPLE_MARKDOWN.to_string()));
+          let url_input = cx.new(|cx| {
+            TextInput::new(cx, "https://github.com/zed-industries/zed".to_string()).on_enter(
+              |window, cx| {
+                window.dispatch_action(Box::new(FetchReadme), cx);
+              },
+            )
+          });
           cx.new(|cx| MarkdownPlayground {
             text_input,
+            url_input,
             rendered_source: SAMPLE_MARKDOWN.into(),
             options: MarkdownRenderOptions {
               theme: Some(MarkdownTheme::dark()),
@@ -393,6 +549,7 @@ fn main() {
               ..Default::default()
             },
             focus_handle: cx.focus_handle(),
+            is_fetching: false,
           })
         },
       )

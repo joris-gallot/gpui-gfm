@@ -31,6 +31,8 @@ actions!(
   ]
 );
 
+type OnEnterCallback = Box<dyn Fn(&mut Window, &mut App)>;
+
 pub struct TextInput {
   pub focus_handle: FocusHandle,
   pub content: SharedString,
@@ -41,6 +43,7 @@ pub struct TextInput {
   last_bounds: Option<Bounds<Pixels>>,
   scroll_offset: f32,
   is_selecting: bool,
+  on_enter: Option<OnEnterCallback>,
 }
 
 impl TextInput {
@@ -55,7 +58,22 @@ impl TextInput {
       last_bounds: None,
       scroll_offset: 0.0,
       is_selecting: false,
+      on_enter: None,
     }
+  }
+
+  /// Set a callback invoked when Enter is pressed (instead of inserting a newline).
+  pub fn on_enter(mut self, callback: impl Fn(&mut Window, &mut App) + 'static) -> Self {
+    self.on_enter = Some(Box::new(callback));
+    self
+  }
+
+  /// Replace the text content.
+  pub fn set_content(&mut self, text: String, cx: &mut Context<Self>) {
+    self.content = text.into();
+    self.selected_range = 0..0;
+    self.marked_range = None;
+    cx.notify();
   }
 
   /// Return the current text content.
@@ -143,7 +161,11 @@ impl TextInput {
   }
 
   fn enter(&mut self, _: &Enter, window: &mut Window, cx: &mut Context<Self>) {
-    self.replace_text_in_range(None, "\n", window, cx);
+    if let Some(on_enter) = self.on_enter.as_ref() {
+      on_enter(window, &mut **cx);
+    } else {
+      self.replace_text_in_range(None, "\n", window, cx);
+    }
   }
 
   fn on_mouse_down(
