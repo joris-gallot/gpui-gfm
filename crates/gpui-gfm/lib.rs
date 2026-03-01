@@ -17,6 +17,6 @@ pub mod types;
 // Re-export main public API.
 pub use parse::{parse_gfm, parse_markdown};
 pub use render::{
-  MarkdownRenderOptions, MarkdownTheme, render_markdown, render_parsed_markdown,
+  DetailsState, MarkdownRenderOptions, MarkdownTheme, render_markdown, render_parsed_markdown,
 };
 pub use types::ParsedMarkdown;

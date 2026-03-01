@@ -5,7 +5,10 @@ pub mod code_block;
 pub mod inline;
 pub mod table;
 
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use gpui::{AnyElement, App, Hsla, SharedString};
 
@@ -21,6 +24,44 @@ pub enum LinkAction {
   Open,
   /// The handler already dealt with the link.
   Handled,
+}
+
+/// Persistent state for `<details>` toggle (open/close).
+///
+/// Shared via `Arc` so that click callbacks can mutate it.
+#[derive(Clone, Default)]
+pub struct DetailsState {
+  /// Maps a details block ID → open/closed.
+  open_map: Arc<Mutex<HashMap<usize, bool>>>,
+  /// Counter for assigning unique IDs to details blocks during rendering.
+  counter: Arc<AtomicUsize>,
+}
+
+impl DetailsState {
+  /// Reset the counter before a new render pass (so IDs are stable).
+  pub fn reset_counter(&self) {
+    self.counter.store(0, Ordering::Relaxed);
+  }
+
+  /// Get the next details block ID.
+  pub fn next_id(&self) -> usize {
+    self.counter.fetch_add(1, Ordering::Relaxed)
+  }
+
+  /// Check if a details block is open, defaulting to `default_open`.
+  pub fn is_open(&self, id: usize, default_open: bool) -> bool {
+    let mut map = self.open_map.lock().unwrap();
+    *map.entry(id).or_insert(default_open)
+  }
+
+  /// Toggle a details block's state, returning the new state.
+  pub fn toggle(&self, id: usize, default_open: bool) -> bool {
+    let mut map = self.open_map.lock().unwrap();
+    let current = *map.entry(id).or_insert(default_open);
+    let next = !current;
+    map.insert(id, next);
+    next
+  }
 }
 
 /// Theme colors for markdown rendering.
@@ -157,6 +198,11 @@ pub struct MarkdownRenderOptions {
   pub expand_code_blocks: bool,
   /// Base URL for resolving relative image paths.
   pub image_base_url: Option<SharedString>,
+  /// Persistent state for `<details>` toggle.
+  ///
+  /// Created automatically on first use. Persists across re-renders so
+  /// toggle state is maintained.
+  pub details_state: DetailsState,
 }
 
 impl MarkdownRenderOptions {
@@ -201,5 +247,87 @@ pub fn render_parsed_markdown(
   options: &MarkdownRenderOptions,
   cx: &App,
 ) -> AnyElement {
+  // Reset the details ID counter so IDs are stable across re-renders.
+  options.details_state.reset_counter();
   blocks::render_blocks(parsed.blocks(), options, 0, cx)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn details_state_default_closed() {
+    let state = DetailsState::default();
+    // Default to false when not explicitly set
+    assert!(!state.is_open(0, false));
+  }
+
+  #[test]
+  fn details_state_default_open() {
+    let state = DetailsState::default();
+    // Respects default_open = true
+    assert!(state.is_open(0, true));
+  }
+
+  #[test]
+  fn details_state_toggle() {
+    let state = DetailsState::default();
+    // Initially closed (default_open = false)
+    assert!(!state.is_open(0, false));
+    // Toggle → open
+    state.toggle(0, false);
+    assert!(state.is_open(0, false));
+    // Toggle → closed again
+    state.toggle(0, false);
+    assert!(!state.is_open(0, false));
+  }
+
+  #[test]
+  fn details_state_toggle_from_open() {
+    let state = DetailsState::default();
+    // Initially open (default_open = true)
+    assert!(state.is_open(0, true));
+    // Toggle → closed
+    state.toggle(0, true);
+    assert!(!state.is_open(0, true));
+  }
+
+  #[test]
+  fn details_state_independent_ids() {
+    let state = DetailsState::default();
+    state.toggle(0, false); // id 0 → open
+    // id 1 should still be at default (closed)
+    assert!(state.is_open(0, false));
+    assert!(!state.is_open(1, false));
+  }
+
+  #[test]
+  fn details_state_counter_increments() {
+    let state = DetailsState::default();
+    assert_eq!(state.next_id(), 0);
+    assert_eq!(state.next_id(), 1);
+    assert_eq!(state.next_id(), 2);
+  }
+
+  #[test]
+  fn details_state_counter_resets() {
+    let state = DetailsState::default();
+    assert_eq!(state.next_id(), 0);
+    assert_eq!(state.next_id(), 1);
+    state.reset_counter();
+    assert_eq!(state.next_id(), 0);
+  }
+
+  #[test]
+  fn details_state_persists_across_resets() {
+    let state = DetailsState::default();
+    let id = state.next_id();
+    state.toggle(id, false); // open
+    assert!(state.is_open(id, false));
+    // Reset counter (simulating a re-render)
+    state.reset_counter();
+    // State should persist
+    assert!(state.is_open(0, false));
+  }
 }

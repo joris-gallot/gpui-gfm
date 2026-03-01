@@ -1,6 +1,6 @@
 //! Block-level rendering.
 
-use gpui::{AnyElement, App, div, prelude::*, px};
+use gpui::{AnyElement, App, MouseButton, SharedString, div, prelude::*, px};
 
 use crate::types::*;
 
@@ -172,10 +172,10 @@ fn render_list_item_blocks(
   container.into_any_element()
 }
 
-/// Render a `<details>` block.
+/// Render a `<details>` block with interactive toggle.
 ///
-/// For now, always render as open (interactive toggle requires stateful Element).
-/// TODO: Add stateful toggle.
+/// Click the summary line to open/close. State persists across re-renders
+/// via `MarkdownRenderOptions::details_state`.
 fn render_details(
   details: &Details,
   options: &MarkdownRenderOptions,
@@ -183,21 +183,36 @@ fn render_details(
   cx: &App,
 ) -> AnyElement {
   let theme = options.theme();
+  let details_id = options.details_state.next_id();
+  let is_open = options.details_state.is_open(details_id, details.open);
+  let chevron = if is_open { "▼ " } else { "▶ " };
+
+  // Build a stable element ID for the clickable summary.
+  let toggle_id: SharedString = format!("gfm-details-{details_id}").into();
+
+  let toggle_state = options.details_state.clone();
+  let default_open = details.open;
 
   let summary_el = div()
+    .id(toggle_id)
     .flex()
     .items_center()
     .gap_1()
     .text_sm()
     .font_weight(gpui::FontWeight::MEDIUM)
     .text_color(theme.foreground)
-    .child("▶ ")
-    .child(render_inline_text(&details.summary, options, cx));
+    .cursor_pointer()
+    .child(chevron)
+    .child(render_inline_text(&details.summary, options, cx))
+    .on_mouse_down(MouseButton::Left, move |_, window, _cx| {
+      toggle_state.toggle(details_id, default_open);
+      window.refresh();
+    });
 
   let mut container = div().flex().flex_col().gap_2().child(summary_el);
 
   // Render body if open
-  if details.open {
+  if is_open {
     container = container.child(div().pl(px(16.0)).child(render_blocks(
       &details.blocks,
       options,

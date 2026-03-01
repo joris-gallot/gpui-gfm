@@ -136,7 +136,7 @@ Content above.
 
 Content below.
 
-## HTML: `<details>` / `<summary>`
+## Details / Summary (HTML block)
 
 <details>
 <summary>Click to expand (closed by default)</summary>
