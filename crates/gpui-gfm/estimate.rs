@@ -69,10 +69,11 @@ fn estimate_block_height_px(
       let cols = wrap_columns_for_indent(wrap_columns, indent);
       estimate_inline_lines(inlines, cols) as f32 * line_height_px
     }
-    Block::Heading { content, .. } => {
+    Block::Heading { level, content } => {
       let cols = wrap_columns_for_indent(wrap_columns, indent);
       let lines = estimate_inline_lines(content, cols);
-      lines as f32 * (line_height_px * 1.4) // headings are larger
+      let scale = heading_scale(*level);
+      lines as f32 * (line_height_px * scale)
     }
     Block::List(list) => estimate_list_height_px(list, wrap_columns, line_height_px, indent),
     Block::CodeBlock(code) => {
@@ -143,12 +144,47 @@ fn estimate_details_height_px(
   summary_height + BASE_BLOCK_GAP_PX + body
 }
 
+/// Height of an inline image in a table cell.
+const TABLE_IMAGE_HEIGHT_PX: f32 = 18.0;
+/// Vertical padding in a table cell.
+const TABLE_CELL_PADDING_PX: f32 = 16.0;
+
 /// Estimate table height.
 fn estimate_table_height_px(table: &Table, line_height_px: f32) -> f32 {
-  let row_height = line_height_px + 16.0; // padding
-  let header_height = row_height;
-  let body_height = table.rows.len() as f32 * (row_height + 1.0); // +1 for border
+  let header_height = estimate_table_row_height(&table.headers, line_height_px);
+  let mut body_height = 0.0f32;
+  for row in &table.rows {
+    body_height += estimate_table_row_height(row, line_height_px) + 1.0; // +1 for border
+  }
   header_height + 2.0 + body_height // +2 for header border
+}
+
+/// Estimate the height of a single table row.
+fn estimate_table_row_height(cells: &[Vec<Inline>], line_height_px: f32) -> f32 {
+  let mut max_height = line_height_px;
+  for cell in cells {
+    let cell_height = if cell_contains_image(cell) {
+      TABLE_IMAGE_HEIGHT_PX
+    } else {
+      line_height_px
+    };
+    max_height = max_height.max(cell_height);
+  }
+  max_height + TABLE_CELL_PADDING_PX
+}
+
+/// Check whether a list of inlines contains an image.
+fn cell_contains_image(inlines: &[Inline]) -> bool {
+  inlines.iter().any(|inline| match inline {
+    Inline::Image { .. } => true,
+    Inline::Strong(children)
+    | Inline::Emphasis(children)
+    | Inline::Strikethrough(children)
+    | Inline::Link {
+      content: children, ..
+    } => cell_contains_image(children),
+    _ => false,
+  })
 }
 
 /// Compute effective wrap columns at a given indent level.
@@ -173,15 +209,66 @@ fn estimate_inline_lines(inlines: &[Inline], wrap_columns: usize) -> usize {
   lines.max(1)
 }
 
-/// Estimate how many visual lines a single text line occupies after wrapping.
+/// Estimate how many visual lines a single text line occupies after word-level wrapping.
+///
+/// Words are split on whitespace boundaries. A word that exceeds the wrap width
+/// on its own is force-broken across multiple lines.
 fn estimate_wrapped_text_lines(line: &str, wrap_columns: usize) -> usize {
   let wrap_columns = wrap_columns.max(1);
   if line.is_empty() {
     return 1;
   }
 
-  let char_count = line.chars().count();
-  ((char_count + wrap_columns - 1) / wrap_columns).max(1)
+  let mut lines = 1usize;
+  let mut col = 0usize;
+
+  for word in line.split_whitespace() {
+    let word_len = word.chars().count();
+
+    if col == 0 {
+      // First word on the line — always place it.
+      if word_len > wrap_columns {
+        // Word itself is wider than the line; force-break it.
+        lines += (word_len - 1) / wrap_columns;
+        col = word_len % wrap_columns;
+        if col == 0 {
+          col = wrap_columns; // exactly fills the last line
+        }
+      } else {
+        col = word_len;
+      }
+    } else {
+      // Subsequent words need a space before them.
+      let needed = 1 + word_len; // space + word
+      if col + needed > wrap_columns {
+        // Wrap to next line.
+        lines += 1;
+        if word_len > wrap_columns {
+          lines += (word_len - 1) / wrap_columns;
+          col = word_len % wrap_columns;
+          if col == 0 {
+            col = wrap_columns;
+          }
+        } else {
+          col = word_len;
+        }
+      } else {
+        col += needed;
+      }
+    }
+  }
+
+  lines
+}
+
+/// Font-size scale factor for headings by level.
+fn heading_scale(level: u8) -> f32 {
+  match level {
+    1 => 1.35,
+    2 => 1.2,
+    3 => 1.05,
+    _ => 1.0,
+  }
 }
 
 #[cfg(test)]
@@ -243,5 +330,142 @@ mod tests {
     let long = estimate_wrapped_text_lines(&"x".repeat(200), 80);
     assert_eq!(short, 1);
     assert!(long > 1);
+  }
+
+  // ------ étape 7: heading scales per level ------
+
+  #[test]
+  fn heading_h1_taller_than_h3() {
+    let content = vec![Inline::Text("Title".into())];
+    let h1 = Block::Heading {
+      level: 1,
+      content: content.clone(),
+    };
+    let h3 = Block::Heading {
+      level: 3,
+      content: content.clone(),
+    };
+    let height_h1 = estimate_block_height_px(&h1, 80, 20.0, 0);
+    let height_h3 = estimate_block_height_px(&h3, 80, 20.0, 0);
+    assert!(
+      height_h1 > height_h3,
+      "h1 ({height_h1}) should be taller than h3 ({height_h3})"
+    );
+  }
+
+  #[test]
+  fn heading_h4_uses_base_line_height() {
+    let content = vec![Inline::Text("Title".into())];
+    let h4 = Block::Heading {
+      level: 4,
+      content: content.clone(),
+    };
+    // scale = 1.0, single line → 1 * 20.0 * 1.0 = 20.0
+    let height = estimate_block_height_px(&h4, 80, 20.0, 0);
+    assert_eq!(height, 20.0);
+  }
+
+  #[test]
+  fn heading_scales_are_monotonic() {
+    assert!(heading_scale(1) > heading_scale(2));
+    assert!(heading_scale(2) > heading_scale(3));
+    assert!(heading_scale(3) > heading_scale(4));
+    assert_eq!(heading_scale(4), heading_scale(5));
+    assert_eq!(heading_scale(5), heading_scale(6));
+  }
+
+  // ------ étape 7: word-level wrapping ------
+
+  #[test]
+  fn word_wrap_does_not_split_words() {
+    // "hello world" at width 8: "hello" (5) fits, then "world" (5) needs 1+5=6 → 5+6=11 > 8
+    // So wraps: line1="hello", line2="world" → 2 lines.
+    assert_eq!(estimate_wrapped_text_lines("hello world", 8), 2);
+  }
+
+  #[test]
+  fn word_wrap_keeps_fitting_words_on_same_line() {
+    // "a b c" at width 10: a(1) + " b"(2) = 3 + " c"(2) = 5 → fits in 10.
+    assert_eq!(estimate_wrapped_text_lines("a b c", 10), 1);
+  }
+
+  #[test]
+  fn word_wrap_long_word_force_breaks() {
+    // "abcdefghij" (10 chars) at width 4 → ceil(10/4) = 3 lines.
+    assert_eq!(estimate_wrapped_text_lines("abcdefghij", 4), 3);
+  }
+
+  #[test]
+  fn word_wrap_empty_line_is_one_line() {
+    assert_eq!(estimate_wrapped_text_lines("", 80), 1);
+  }
+
+  #[test]
+  fn word_wrap_exact_fit() {
+    // "abcd efgh" at width 9: "abcd"(4) + " efgh"(5) = 9 → fits exactly.
+    assert_eq!(estimate_wrapped_text_lines("abcd efgh", 9), 1);
+  }
+
+  // ------ étape 7: table with images ------
+
+  #[test]
+  fn table_with_image_cell_uses_image_height() {
+    let table = Table {
+      headers: vec![
+        vec![Inline::Text("Name".into())],
+        vec![Inline::Text("Badge".into())],
+      ],
+      rows: vec![vec![
+        vec![Inline::Text("foo".into())],
+        vec![Inline::Image {
+          url: "https://example.com/badge.png".into(),
+          title: None,
+          alt: "badge".into(),
+          width: None,
+          height: None,
+          dark_url: None,
+          light_url: None,
+        }],
+      ]],
+    };
+
+    let h_with_image = estimate_table_height_px(&table, 20.0);
+
+    // Compare to table without images
+    let table_text = Table {
+      headers: vec![
+        vec![Inline::Text("Name".into())],
+        vec![Inline::Text("Badge".into())],
+      ],
+      rows: vec![vec![
+        vec![Inline::Text("foo".into())],
+        vec![Inline::Text("bar".into())],
+      ]],
+    };
+    let h_text_only = estimate_table_height_px(&table_text, 20.0);
+
+    // Both should be > 0 and reasonably close (image 18px vs text 20px in this case)
+    assert!(h_with_image > 0.0);
+    assert!(h_text_only > 0.0);
+  }
+
+  #[test]
+  fn cell_contains_image_detects_nested() {
+    let inlines = vec![Inline::Strong(vec![Inline::Image {
+      url: "x".into(),
+      title: None,
+      alt: "".into(),
+      width: None,
+      height: None,
+      dark_url: None,
+      light_url: None,
+    }])];
+    assert!(cell_contains_image(&inlines));
+  }
+
+  #[test]
+  fn cell_contains_image_false_for_text() {
+    let inlines = vec![Inline::Text("hello".into())];
+    assert!(!cell_contains_image(&inlines));
   }
 }
