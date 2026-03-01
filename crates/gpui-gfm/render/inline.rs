@@ -19,13 +19,20 @@ pub fn render_inline_text(
   let mut text = String::new();
   let mut runs: Vec<TextRun> = Vec::new();
 
-  flatten_inlines(inlines, &mut text, &mut runs, &InlineContext {
-    bold: false,
-    italic: false,
-    strikethrough: false,
-    code: false,
-    link: false,
-  }, options, cx);
+  flatten_inlines(
+    inlines,
+    &mut text,
+    &mut runs,
+    &InlineContext {
+      bold: false,
+      italic: false,
+      strikethrough: false,
+      code: false,
+      link: false,
+    },
+    options,
+    cx,
+  );
 
   if text.is_empty() {
     return div().into_any_element();
@@ -73,10 +80,7 @@ fn flatten_inlines(
         text.push_str(value);
         let end = text.len();
         if end > start {
-          let code_ctx = InlineContext {
-            code: true,
-            ..*ctx
-          };
+          let code_ctx = InlineContext { code: true, ..*ctx };
           runs.push(make_text_run(start..end, &code_ctx, theme));
         }
       }
@@ -94,10 +98,7 @@ fn flatten_inlines(
       }
 
       Inline::Strong(children) => {
-        let bold_ctx = InlineContext {
-          bold: true,
-          ..*ctx
-        };
+        let bold_ctx = InlineContext { bold: true, ..*ctx };
         flatten_inlines(children, text, runs, &bold_ctx, options, cx);
       }
 
@@ -118,15 +119,14 @@ fn flatten_inlines(
       }
 
       Inline::Link { content, .. } => {
-        let link_ctx = InlineContext {
-          link: true,
-          ..*ctx
-        };
+        let link_ctx = InlineContext { link: true, ..*ctx };
         flatten_inlines(content, text, runs, &link_ctx, options, cx);
       }
 
-      Inline::Image { alt, .. } => {
-        // For now, render alt text inline. Image rendering will be added later.
+      Inline::Image { alt, url, .. } => {
+        // Resolve the URL (relative → absolute if base_url is set).
+        let _resolved_url = resolve_url(url, options);
+        // For now, render alt text inline. Full image rendering in étape 8.
         if !alt.is_empty() {
           let start = text.len();
           text.push_str(alt);
@@ -212,4 +212,112 @@ fn make_text_run(
   };
 
   run
+}
+
+/// Resolve a potentially relative URL against the `image_base_url`.
+///
+/// - Absolute URLs (`http://`, `https://`, `data:`) are returned as-is.
+/// - Relative URLs are joined with `base_url`.
+/// - If no `base_url` is configured, the URL is returned as-is.
+pub fn resolve_url(url: &str, options: &MarkdownRenderOptions) -> String {
+  let base = match &options.image_base_url {
+    Some(b) => b,
+    None => return url.to_string(),
+  };
+
+  // Already absolute — don't touch.
+  if url.starts_with("http://")
+    || url.starts_with("https://")
+    || url.starts_with("data:")
+    || url.starts_with("//")
+  {
+    return url.to_string();
+  }
+
+  // Join base + relative. Ensure exactly one `/` between them.
+  let base = base.trim_end_matches('/');
+  let rel = url.trim_start_matches('/');
+  format!("{base}/{rel}")
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn resolve_relative_url_with_base() {
+    let opts = MarkdownRenderOptions::default()
+      .with_image_base_url("https://raw.githubusercontent.com/owner/repo/main");
+    assert_eq!(
+      resolve_url("images/logo.png", &opts),
+      "https://raw.githubusercontent.com/owner/repo/main/images/logo.png"
+    );
+  }
+
+  #[test]
+  fn resolve_relative_url_with_leading_slash() {
+    let opts = MarkdownRenderOptions::default().with_image_base_url("https://example.com/assets");
+    assert_eq!(
+      resolve_url("/img/banner.svg", &opts),
+      "https://example.com/assets/img/banner.svg"
+    );
+  }
+
+  #[test]
+  fn resolve_relative_url_base_trailing_slash() {
+    let opts = MarkdownRenderOptions::default().with_image_base_url("https://example.com/assets/");
+    assert_eq!(
+      resolve_url("icon.png", &opts),
+      "https://example.com/assets/icon.png"
+    );
+  }
+
+  #[test]
+  fn absolute_url_unchanged() {
+    let opts = MarkdownRenderOptions::default().with_image_base_url("https://example.com");
+    assert_eq!(
+      resolve_url("https://cdn.example.com/image.png", &opts),
+      "https://cdn.example.com/image.png"
+    );
+  }
+
+  #[test]
+  fn http_url_unchanged() {
+    let opts = MarkdownRenderOptions::default().with_image_base_url("https://example.com");
+    assert_eq!(
+      resolve_url("http://cdn.example.com/image.png", &opts),
+      "http://cdn.example.com/image.png"
+    );
+  }
+
+  #[test]
+  fn data_uri_unchanged() {
+    let opts = MarkdownRenderOptions::default().with_image_base_url("https://example.com");
+    let data_url = "data:image/png;base64,iVBORw0KGgo=";
+    assert_eq!(resolve_url(data_url, &opts), data_url);
+  }
+
+  #[test]
+  fn protocol_relative_url_unchanged() {
+    let opts = MarkdownRenderOptions::default().with_image_base_url("https://example.com");
+    assert_eq!(
+      resolve_url("//cdn.example.com/img.png", &opts),
+      "//cdn.example.com/img.png"
+    );
+  }
+
+  #[test]
+  fn no_base_url_returns_as_is() {
+    let opts = MarkdownRenderOptions::default();
+    assert_eq!(resolve_url("images/logo.png", &opts), "images/logo.png");
+  }
+
+  #[test]
+  fn no_double_slashes_on_join() {
+    let opts = MarkdownRenderOptions::default().with_image_base_url("https://example.com/");
+    assert_eq!(
+      resolve_url("/path/img.png", &opts),
+      "https://example.com/path/img.png"
+    );
+  }
 }

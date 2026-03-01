@@ -13,37 +13,168 @@ const SAMPLE_MARKDOWN: &str = r#"# gpui-gfm playground
 
 A **GitHub Flavored Markdown** renderer for [GPUI](https://gpui.rs).
 
-## Features
+## ATX Headings (§4.2)
 
-- [x] Headings
-- [x] **Bold**, *italic*, ~~strikethrough~~
-- [x] Links and inline `code`
-- [ ] Images (coming soon)
+# Heading 1
+## Heading 2
+### Heading 3
+#### Heading 4
+##### Heading 5
+###### Heading 6
 
-## Code block
+Setext Heading 1 (§4.3)
+=======================
+
+Setext Heading 2 (§4.3)
+-----------------------
+
+## Paragraphs (§4.8)
+
+This is a paragraph with **bold**, *italic*, ~~strikethrough~~, and `inline code`.
+
+This is another paragraph. Soft breaks
+are rendered as spaces.
+
+Hard break with two trailing spaces:  
+This is on a new line.
+
+## Emphasis (§6.2–6.4)
+
+- **Bold text**
+- *Italic text*
+- ***Bold and italic***
+- **~~Bold strikethrough~~**
+- *~~Italic strikethrough~~*
+
+## Strikethrough — GFM extension (§6.5)
+
+~~This text is deleted.~~
+
+## Links (§6.6)
+
+- [Inline link](https://github.com)
+- [Link with title](https://github.com "GitHub")
+- <https://github.com> (autolink §6.9)
+
+## Images (§6.7)
+
+With `image_base_url` = `https://raw.githubusercontent.com/owner/repo/main`:
+
+![Relative image](images/logo.png)
+![Absolute image](https://cdn.example.com/badge.svg)
+
+## Inline Code (§6.1)
+
+Use `println!()` to print. Double backticks: ``code with `backtick` inside``.
+
+## Fenced Code Blocks (§4.5)
 
 ```rust
 fn main() {
-    println!("Hello, GFM!");
+    let long = "This line is intentionally very long to demonstrate horizontal scrolling in code blocks — it should not wrap";
+    println!("{long}");
 }
 ```
 
-## Table
+```python
+def fibonacci(n: int) -> int:
+    if n <= 1:
+        return n
+    return fibonacci(n - 1) + fibonacci(n - 2)
+```
 
-| Feature | Status |
-|---------|--------|
-| Parsing | ✅ Done |
-| Rendering | ✅ Done |
-| Syntax highlighting | 🔜 Planned |
+## Indented Code Block (§4.4)
 
-## Blockquote
+    This is an indented code block.
+    It uses 4 spaces of indentation.
+    No language label is shown.
 
-> This is a blockquote.
-> It can span multiple lines.
+## Block Quotes (§5.1)
+
+> A blockquote with **bold** and *italic*.
+>
+> > Nested blockquote.
+
+## Unordered List (§5.3)
+
+- Item one
+- Item two
+  - Nested item
+  - Another nested
+- Item three
+
+## Ordered List (§5.2)
+
+1. First item
+2. Second item
+3. Third item
+   1. Nested ordered
+   2. More nested
+
+## Task List — GFM extension (§5.4)
+
+- [x] Completed task
+- [x] Another done
+- [ ] Pending task
+- [ ] Still todo
+
+## Table — GFM extension (§4.10)
+
+| Feature | Status | Notes |
+|:--------|:------:|------:|
+| Parsing | ✅ | comrak-based |
+| Rendering | ✅ | GPUI elements |
+| Left align | ✅ | `:---` |
+| Center align | ✅ | `:---:` |
+| Right align | ✅ | `---:` |
+
+## Thematic Break (§4.1)
+
+Content above.
 
 ---
 
-*That's all for now!*
+Content below.
+
+## HTML: `<details>` / `<summary>`
+
+<details>
+<summary>Click to expand (closed by default)</summary>
+
+Hidden content with **formatting** and `code`.
+
+- Nested item A
+- Nested item B
+
+</details>
+
+<details open>
+<summary>Starts open</summary>
+
+This section is visible because of the `open` attribute.
+
+</details>
+
+## HTML: `<div align="center">`
+
+<div align="center">
+
+Centered content via HTML align attribute.
+
+</div>
+
+## Render Options Demo
+
+| Option | Value |
+|--------|-------|
+| `theme` | `MarkdownTheme::dark()` |
+| `code_font_family` | Menlo (monospace) |
+| `image_base_url` | `https://raw.githubusercontent.com/owner/repo/main` |
+| `expand_code_blocks` | `false` (scroll cap at 400px) |
+
+---
+
+*End of GFM feature demo.*
 "#;
 
 struct MarkdownPlayground {
@@ -222,6 +353,7 @@ fn main() {
             rendered_source: SAMPLE_MARKDOWN.into(),
             options: MarkdownRenderOptions {
               theme: Some(MarkdownTheme::dark()),
+              image_base_url: Some("https://raw.githubusercontent.com/owner/repo/main".into()),
               ..Default::default()
             },
             focus_handle: cx.focus_handle(),
