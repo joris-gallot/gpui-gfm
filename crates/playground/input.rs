@@ -28,6 +28,16 @@ actions!(
     Cut,
     Copy,
     Enter,
+    WordLeft,
+    WordRight,
+    SelectWordLeft,
+    SelectWordRight,
+    DeleteWordLeft,
+    LineStart,
+    LineEnd,
+    SelectToLineStart,
+    SelectToLineEnd,
+    DeleteToLineStart,
   ]
 );
 
@@ -168,6 +178,71 @@ impl TextInput {
     }
   }
 
+  // ── Word navigation (Alt+Arrow) ──
+
+  fn word_left(&mut self, _: &WordLeft, _: &mut Window, cx: &mut Context<Self>) {
+    self.move_to(self.previous_word_boundary(self.cursor_offset()), cx);
+  }
+
+  fn word_right(&mut self, _: &WordRight, _: &mut Window, cx: &mut Context<Self>) {
+    self.move_to(self.next_word_boundary(self.cursor_offset()), cx);
+  }
+
+  fn select_word_left(&mut self, _: &SelectWordLeft, _: &mut Window, cx: &mut Context<Self>) {
+    self.select_to(self.previous_word_boundary(self.cursor_offset()), cx);
+  }
+
+  fn select_word_right(&mut self, _: &SelectWordRight, _: &mut Window, cx: &mut Context<Self>) {
+    self.select_to(self.next_word_boundary(self.cursor_offset()), cx);
+  }
+
+  fn delete_word_left(&mut self, _: &DeleteWordLeft, window: &mut Window, cx: &mut Context<Self>) {
+    if self.selected_range.is_empty() {
+      self.select_to(self.previous_word_boundary(self.cursor_offset()), cx);
+    }
+    self.replace_text_in_range(None, "", window, cx);
+  }
+
+  // ── Line navigation (Cmd+Arrow) ──
+
+  fn line_start(&mut self, _: &LineStart, _: &mut Window, cx: &mut Context<Self>) {
+    let offset = self.line_start_offset(self.cursor_offset());
+    self.move_to(offset, cx);
+  }
+
+  fn line_end(&mut self, _: &LineEnd, _: &mut Window, cx: &mut Context<Self>) {
+    let offset = self.line_end_offset(self.cursor_offset());
+    self.move_to(offset, cx);
+  }
+
+  fn select_to_line_start(
+    &mut self,
+    _: &SelectToLineStart,
+    _: &mut Window,
+    cx: &mut Context<Self>,
+  ) {
+    let offset = self.line_start_offset(self.cursor_offset());
+    self.select_to(offset, cx);
+  }
+
+  fn select_to_line_end(&mut self, _: &SelectToLineEnd, _: &mut Window, cx: &mut Context<Self>) {
+    let offset = self.line_end_offset(self.cursor_offset());
+    self.select_to(offset, cx);
+  }
+
+  fn delete_to_line_start(
+    &mut self,
+    _: &DeleteToLineStart,
+    window: &mut Window,
+    cx: &mut Context<Self>,
+  ) {
+    if self.selected_range.is_empty() {
+      let start = self.line_start_offset(self.cursor_offset());
+      self.select_to(start, cx);
+    }
+    self.replace_text_in_range(None, "", window, cx);
+  }
+
   fn on_mouse_down(
     &mut self,
     event: &MouseDownEvent,
@@ -279,6 +354,71 @@ impl TextInput {
       .nth(1)
       .map(|(idx, _)| offset + idx)
       .unwrap_or(self.content.len())
+  }
+
+  /// Find the start of the previous word from `offset`.
+  fn previous_word_boundary(&self, offset: usize) -> usize {
+    if offset == 0 {
+      return 0;
+    }
+    let before = &self.content[..offset];
+    // Skip trailing whitespace/punctuation, then skip the word itself
+    let mut pos = before.len();
+    // Skip whitespace backwards
+    for ch in before.chars().rev() {
+      if ch.is_whitespace() || ch.is_ascii_punctuation() {
+        pos -= ch.len_utf8();
+      } else {
+        break;
+      }
+    }
+    // Skip word chars backwards
+    for ch in self.content[..pos].chars().rev() {
+      if ch.is_whitespace() || ch.is_ascii_punctuation() {
+        break;
+      }
+      pos -= ch.len_utf8();
+    }
+    pos
+  }
+
+  /// Find the end of the next word from `offset`.
+  fn next_word_boundary(&self, offset: usize) -> usize {
+    if offset >= self.content.len() {
+      return self.content.len();
+    }
+    let after = &self.content[offset..];
+    let mut pos = offset;
+    let mut chars = after.chars();
+    // Skip current word chars
+    for ch in chars.by_ref() {
+      if ch.is_whitespace() || ch.is_ascii_punctuation() {
+        pos += ch.len_utf8();
+        break;
+      }
+      pos += ch.len_utf8();
+    }
+    // Skip whitespace/punctuation
+    for ch in chars {
+      if ch.is_whitespace() || ch.is_ascii_punctuation() {
+        pos += ch.len_utf8();
+      } else {
+        break;
+      }
+    }
+    pos
+  }
+
+  /// Byte offset of the start of the current line.
+  fn line_start_offset(&self, offset: usize) -> usize {
+    self.content[..offset].rfind('\n').map_or(0, |p| p + 1)
+  }
+
+  /// Byte offset of the end of the current line (before the newline).
+  fn line_end_offset(&self, offset: usize) -> usize {
+    self.content[offset..]
+      .find('\n')
+      .map_or(self.content.len(), |p| offset + p)
   }
 
   /// Convert a byte offset to (row, col) in the text.
@@ -531,6 +671,16 @@ impl Render for TextInput {
       .on_action(cx.listener(Self::home))
       .on_action(cx.listener(Self::end))
       .on_action(cx.listener(Self::enter))
+      .on_action(cx.listener(Self::word_left))
+      .on_action(cx.listener(Self::word_right))
+      .on_action(cx.listener(Self::select_word_left))
+      .on_action(cx.listener(Self::select_word_right))
+      .on_action(cx.listener(Self::delete_word_left))
+      .on_action(cx.listener(Self::line_start))
+      .on_action(cx.listener(Self::line_end))
+      .on_action(cx.listener(Self::select_to_line_start))
+      .on_action(cx.listener(Self::select_to_line_end))
+      .on_action(cx.listener(Self::delete_to_line_start))
       .on_action(cx.listener(Self::show_character_palette))
       .on_action(cx.listener(Self::paste))
       .on_action(cx.listener(Self::cut))
