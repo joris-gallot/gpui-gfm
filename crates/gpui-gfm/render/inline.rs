@@ -1,8 +1,8 @@
 //! Inline text rendering — converts `Vec<Inline>` into styled GPUI text.
 
 use gpui::{
-  AnyElement, App, FontStyle, FontWeight, SharedString, StrikethroughStyle, StyledText, TextRun,
-  UnderlineStyle, div, prelude::*, px,
+  AnyElement, App, Font, FontStyle, FontWeight, SharedString, StrikethroughStyle, StyledText,
+  TextRun, UnderlineStyle, div, prelude::*, px,
 };
 
 use crate::types::*;
@@ -187,10 +187,19 @@ fn make_text_run(
 
   let run = TextRun {
     len,
-    font: gpui::Font {
-      weight: font_weight,
-      style: font_style,
-      ..Default::default()
+    font: if ctx.code {
+      Font {
+        family: theme.code_font_family.clone(),
+        weight: font_weight,
+        style: font_style,
+        ..Default::default()
+      }
+    } else {
+      Font {
+        weight: font_weight,
+        style: font_style,
+        ..Default::default()
+      }
     },
     color,
     underline: Some(underline),

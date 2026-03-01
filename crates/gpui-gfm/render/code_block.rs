@@ -1,6 +1,6 @@
 //! Code block rendering.
 
-use gpui::{AnyElement, App, SharedString, div, prelude::*, px};
+use gpui::{AnyElement, App, Font, SharedString, div, prelude::*, px};
 
 use crate::types::CodeBlock;
 
@@ -51,8 +51,12 @@ pub fn render_code_block(
   }
 
   // Code content — needs an id to support scrolling
-  let code_id: SharedString =
-    format!("md-code-{:x}", code as *const CodeBlock as usize).into();
+  let code_id: SharedString = format!("md-code-{:x}", code as *const CodeBlock as usize).into();
+  let code_font = Font {
+    family: theme.code_font_family.clone(),
+    ..Default::default()
+  };
+
   let mut code_area = div()
     .id(code_id)
     .px(px(CODE_BLOCK_PADDING_X_PX))
@@ -60,7 +64,9 @@ pub fn render_code_block(
     .pb(px(CODE_BLOCK_PADDING_BOTTOM_PX))
     .text_sm()
     .text_color(theme.foreground)
-    .whitespace_normal()
+    .font(code_font)
+    .whitespace_nowrap()
+    .overflow_x_scroll()
     .overflow_y_scroll()
     .child(text);
 

@@ -9,7 +9,6 @@ use std::sync::Arc;
 
 use gpui::{AnyElement, App, Hsla, SharedString};
 
-use crate::github::GithubIssueReferenceContext;
 use crate::types::ParsedMarkdown;
 
 /// A link click handler.
@@ -37,6 +36,8 @@ pub struct MarkdownTheme {
   pub border: Hsla,
   pub link: Hsla,
   pub accent: Hsla,
+  /// Font family for code blocks and inline code.
+  pub code_font_family: SharedString,
 }
 
 impl Default for MarkdownTheme {
@@ -91,6 +92,7 @@ impl MarkdownTheme {
         l: 0.5,
         a: 1.0,
       },
+      code_font_family: "Menlo".into(),
     }
   }
 
@@ -139,6 +141,7 @@ impl MarkdownTheme {
         l: 0.5,
         a: 1.0,
       },
+      code_font_family: "Menlo".into(),
     }
   }
 }
@@ -150,8 +153,6 @@ pub struct MarkdownRenderOptions {
   pub on_link: Option<Arc<LinkHandlerFn>>,
   /// Theme colors.
   pub theme: Option<MarkdownTheme>,
-  /// GitHub issue reference context for auto-linking `#123`.
-  pub github_issue_reference_context: Option<GithubIssueReferenceContext>,
   /// Whether code blocks render at full height (no scroll cap).
   pub expand_code_blocks: bool,
   /// Base URL for resolving relative image paths.

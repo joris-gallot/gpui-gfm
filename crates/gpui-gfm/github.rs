@@ -23,18 +23,6 @@ pub struct GithubIssueReferenceContext {
   pub repo: Arc<str>,
 }
 
-/// A rich preview for a GitHub code reference.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GithubCodeReferencePreview {
-  pub url: Arc<str>,
-  pub repo: Arc<str>,
-  pub path: Arc<str>,
-  pub reference: Arc<str>,
-  pub start_line: usize,
-  pub end_line: usize,
-  pub snippets: Vec<Arc<str>>,
-}
-
 /// Parse a GitHub blob URL into its components with line reference.
 ///
 /// Handles URLs like:
