@@ -8,6 +8,8 @@
 4. Validate before handoff:
    - `cargo check`
    - `cargo test`
+5. Every GFM spec feature must have a matching example in the playground `SAMPLE_MARKDOWN` (`crates/playground/main.rs`).
+6. Every render option implemented must have an example in the playground demonstrating its effect.
 
 ## Code Rules
 
