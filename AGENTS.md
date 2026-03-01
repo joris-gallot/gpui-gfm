@@ -6,6 +6,7 @@
 2. Keep changes minimal and scoped to the requested task.
 3. For each feature/fix, add or update tests.
 4. Validate before handoff:
+   - `cargo fmt`
    - `cargo check`
    - `cargo test`
 5. Every GFM spec feature must have a matching example in the playground `SAMPLE_MARKDOWN` (`crates/playground/main.rs`).
