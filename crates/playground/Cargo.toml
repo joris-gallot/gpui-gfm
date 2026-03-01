@@ -12,3 +12,4 @@ gpui-gfm = { path = "../gpui-gfm" }
 gpui.workspace = true
 gpui_platform.workspace = true
 core-text.workspace = true
+unicode-segmentation = "1"
