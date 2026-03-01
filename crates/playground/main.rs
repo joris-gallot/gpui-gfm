@@ -73,6 +73,8 @@ Use `println!()` to print. Double backticks: ``code with `backtick` inside``.
 
 ## Fenced Code Blocks (§4.5)
 
+Hover over a code block to reveal the **Copy** button (top-right).
+
 ```rust
 fn main() {
     let long = "This line is intentionally very long to demonstrate horizontal scrolling in code blocks — it should not wrap";

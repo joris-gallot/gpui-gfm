@@ -1,6 +1,6 @@
 //! Code block rendering.
 
-use gpui::{AnyElement, App, Font, SharedString, div, prelude::*, px};
+use gpui::{AnyElement, App, ClipboardItem, Font, MouseButton, SharedString, div, prelude::*, px};
 
 use crate::types::CodeBlock;
 
@@ -22,12 +22,18 @@ pub fn render_code_block(
 
   // Prepare display text: strip trailing newline
   let display_value = code_block_display_value(code);
-  let text: SharedString = display_value.into();
+  let text: SharedString = display_value.clone().into();
 
   // Language label
   let lang_label = code.lang.as_deref().unwrap_or("");
 
+  // Outer container with group for hover-reveal of copy button
+  let container_id: SharedString =
+    format!("md-code-container-{:x}", code as *const CodeBlock as usize).into();
+
   let mut container = div()
+    .id(container_id)
+    .group("code-block")
     .w_full()
     .min_w_0()
     .rounded_md()
@@ -35,6 +41,33 @@ pub fn render_code_block(
     .border_color(theme.border)
     .bg(theme.code_background)
     .overflow_hidden();
+
+  // Copy button — positioned inside the code area wrapper (below header)
+  let copy_btn_id: SharedString = format!("md-copy-{:x}", code as *const CodeBlock as usize).into();
+  let clipboard_value = display_value;
+  let hover_bg = theme.border;
+
+  let copy_button = div()
+    .id(copy_btn_id)
+    .absolute()
+    .top_1()
+    .right_1()
+    .px_2()
+    .py(px(2.0))
+    .rounded_md()
+    .text_xs()
+    .text_color(theme.muted_foreground)
+    .bg(theme.code_background)
+    .border_1()
+    .border_color(theme.border)
+    .cursor_pointer()
+    .opacity(0.0)
+    .group_hover("code-block", |s| s.opacity(1.0))
+    .hover(move |s| s.bg(hover_bg))
+    .on_mouse_down(MouseButton::Left, move |_, _window, cx| {
+      cx.write_to_clipboard(ClipboardItem::new_string(clipboard_value.clone()));
+    })
+    .child("Copy");
 
   // Language header if present
   if !lang_label.is_empty() {
@@ -74,7 +107,11 @@ pub fn render_code_block(
     code_area = code_area.max_h(px(CODE_BLOCK_MAX_HEIGHT_PX));
   }
 
-  container.child(code_area).into_any_element()
+  // Wrap code area + copy button in a relative container so the button
+  // is positioned relative to the code area (below the header).
+  let code_wrapper = div().relative().child(code_area).child(copy_button);
+
+  container.child(code_wrapper).into_any_element()
 }
 
 /// Prepare the display text for a code block.
@@ -144,5 +181,17 @@ mod tests {
       value: "no newline".into(),
     };
     assert_eq!(code_block_display_value(&code), "no newline");
+  }
+
+  #[test]
+  fn clipboard_content_matches_display() {
+    // The clipboard should get the same content as what's displayed
+    let code = CodeBlock {
+      lang: Some("rust".into()),
+      value: "fn main() {\n\tprintln!(\"hello\");\n}\n".into(),
+    };
+    let display = code_block_display_value(&code);
+    // Trailing newline stripped, tabs expanded
+    assert_eq!(display, "fn main() {\n    println!(\"hello\");\n}");
   }
 }
