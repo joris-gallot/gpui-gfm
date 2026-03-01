@@ -46,6 +46,7 @@ type OnEnterCallback = Box<dyn Fn(&mut Window, &mut App)>;
 pub struct TextInput {
   pub focus_handle: FocusHandle,
   pub content: SharedString,
+  placeholder: Option<SharedString>,
   selected_range: Range<usize>,
   selection_reversed: bool,
   marked_range: Option<Range<usize>>,
@@ -61,6 +62,7 @@ impl TextInput {
     Self {
       focus_handle: cx.focus_handle(),
       content: initial_content.into(),
+      placeholder: None,
       selected_range: 0..0,
       selection_reversed: false,
       marked_range: None,
@@ -75,6 +77,12 @@ impl TextInput {
   /// Set a callback invoked when Enter is pressed (instead of inserting a newline).
   pub fn on_enter(mut self, callback: impl Fn(&mut Window, &mut App) + 'static) -> Self {
     self.on_enter = Some(Box::new(callback));
+    self
+  }
+
+  /// Set placeholder text shown when content is empty.
+  pub fn placeholder(mut self, text: impl Into<SharedString>) -> Self {
+    self.placeholder = Some(text.into());
     self
   }
 
@@ -703,6 +711,7 @@ pub struct PrepaintState {
   lines: Vec<ShapedLine>,
   cursor: Option<PaintQuad>,
   selections: Vec<PaintQuad>,
+  placeholder: Option<ShapedLine>,
 }
 
 impl IntoElement for TextElement {
@@ -754,6 +763,7 @@ impl Element for TextElement {
     let content = input.content.clone();
     let selected_range = input.selected_range.clone();
     let cursor_offset = input.cursor_offset();
+    let placeholder_text = input.placeholder.clone();
     let style = window.text_style();
     let font_size = style.font_size.to_pixels(window.rem_size());
     let line_height = window.line_height();
@@ -885,10 +895,30 @@ impl Element for TextElement {
       }
     }
 
+    // Shape placeholder if content is empty
+    let placeholder_line = if content.is_empty() {
+      placeholder_text.map(|text| {
+        let run = TextRun {
+          len: text.len(),
+          font: style.font(),
+          color: gpui::hsla(0., 0., 0.5, 0.5),
+          background_color: None,
+          underline: None,
+          strikethrough: None,
+        };
+        window
+          .text_system()
+          .shape_line(text, font_size, &[run], None)
+      })
+    } else {
+      None
+    };
+
     PrepaintState {
       lines: shaped_lines,
       cursor: cursor_quad,
       selections,
+      placeholder: placeholder_line,
     }
   }
 
@@ -916,6 +946,15 @@ impl Element for TextElement {
 
     // Paint lines
     let line_height = window.line_height();
+
+    // Paint placeholder if present
+    if let Some(placeholder) = &prepaint.placeholder {
+      let origin = point(bounds.left(), bounds.top());
+      placeholder
+        .paint(origin, line_height, gpui::TextAlign::Left, None, window, cx)
+        .ok();
+    }
+
     for (row, line) in prepaint.lines.iter().enumerate() {
       let origin = point(bounds.left(), bounds.top() + line_height * row as f32);
       line

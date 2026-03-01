@@ -536,11 +536,11 @@ fn main() {
         |_, cx| {
           let text_input = cx.new(|cx| TextInput::new(cx, SAMPLE_MARKDOWN.to_string()));
           let url_input = cx.new(|cx| {
-            TextInput::new(cx, "https://github.com/zed-industries/zed".to_string()).on_enter(
-              |window, cx| {
+            TextInput::new(cx, String::new())
+              .placeholder("https://github.com/zed-industries/zed")
+              .on_enter(|window, cx| {
                 window.dispatch_action(Box::new(FetchReadme), cx);
-              },
-            )
+              })
           });
           cx.new(|cx| MarkdownPlayground {
             text_input,
