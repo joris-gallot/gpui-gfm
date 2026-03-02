@@ -279,4 +279,99 @@ Outer body
     // Both point to same allocation
     assert!(std::sync::Arc::ptr_eq(&p1.blocks, &p2.blocks));
   }
+
+  #[test]
+  fn parse_picture_element() {
+    let md = r#"<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="light.svg">
+  <img src="default.svg" alt="Logo">
+</picture>"#;
+    let blocks = parse_gfm(md);
+    assert!(!blocks.is_empty(), "picture should produce blocks");
+    // Should find an Image inline with dark/light URLs
+    let has_themed_image = blocks.iter().any(|b| match b {
+      Block::Paragraph(inlines) => inlines.iter().any(|i| match i {
+        Inline::Image {
+          dark_url,
+          light_url,
+          ..
+        } => dark_url.is_some() || light_url.is_some(),
+        _ => false,
+      }),
+      _ => false,
+    });
+    assert!(
+      has_themed_image,
+      "expected Image with dark/light URLs, got: {blocks:?}"
+    );
+  }
+
+  #[test]
+  fn parse_html_heading_block() {
+    let md = "<h1>HTML Heading</h1>\n\nSome text";
+    let blocks = parse_gfm(md);
+    let has_heading = blocks
+      .iter()
+      .any(|b| matches!(b, Block::Heading { level: 1, .. }));
+    assert!(has_heading, "expected h1 heading, got: {blocks:?}");
+  }
+
+  #[test]
+  fn parse_centered_html_heading() {
+    let md = r#"<h2 align="center">Centered Title</h2>"#;
+    let blocks = parse_gfm(md);
+    let has_centered_heading = blocks.iter().any(|b| matches!(
+      b,
+      Block::Aligned { center: true, blocks } if blocks.iter().any(|b| matches!(b, Block::Heading { level: 2, .. }))
+    ));
+    assert!(
+      has_centered_heading,
+      "expected centered h2, got: {blocks:?}"
+    );
+  }
+
+  #[test]
+  fn parse_centered_paragraph() {
+    let md = r#"<p align="center">Centered content</p>"#;
+    let blocks = parse_gfm(md);
+    let has_centered = blocks
+      .iter()
+      .any(|b| matches!(b, Block::Aligned { center: true, .. }));
+    assert!(has_centered, "expected centered paragraph, got: {blocks:?}");
+  }
+
+  #[test]
+  fn parse_linked_html_image() {
+    // When <a><img></a> is alone on a line, comrak treats <a> as inline HTML
+    // (not block-level), so the link wrapper is lost but the image is extracted.
+    // The parse_link_wrapping_image function handles the case where the full
+    // HTML block is available (e.g. inside a <div> or <p>).
+    let md = r#"<a href="https://example.com"><img src="badge.svg" alt="Badge"></a>"#;
+    let blocks = parse_gfm(md);
+    let has_image = blocks.iter().any(|b| match b {
+      Block::Paragraph(inlines) => inlines.iter().any(|i| matches!(i, Inline::Image { .. })),
+      _ => false,
+    });
+    assert!(has_image, "expected Image, got: {blocks:?}");
+  }
+
+  #[test]
+  fn parse_linked_image_in_centered_div() {
+    // Inside an HTML block (like centered div), link wrapping image IS preserved
+    let md = r#"<div align="center">
+
+<a href="https://example.com"><img src="badge.svg" alt="Badge"></a>
+
+</div>"#;
+    let blocks = parse_gfm(md);
+    // Should have an Aligned block containing the image
+    let has_content = blocks
+      .iter()
+      .any(|b| matches!(b, Block::Aligned { center: true, .. }));
+    assert!(
+      has_content,
+      "expected centered aligned block, got: {blocks:?}"
+    );
+  }
 }

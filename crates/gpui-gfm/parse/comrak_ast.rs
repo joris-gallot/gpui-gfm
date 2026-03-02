@@ -134,13 +134,7 @@ fn blocks_from_node<'a>(node: &'a AstNode<'a>) -> Vec<Block> {
       if html::is_html_comment_only(literal) || html::is_details_close_only(literal) {
         Vec::new()
       } else {
-        // Try to extract useful content from HTML blocks
-        let inlines = html::parse_html_to_inlines(literal);
-        if inlines.is_empty() {
-          Vec::new()
-        } else {
-          vec![Block::Paragraph(inlines)]
-        }
+        html_block_to_blocks(literal)
       }
     }
     NodeValue::Text(text) => {
@@ -158,6 +152,54 @@ fn blocks_from_node<'a>(node: &'a AstNode<'a>) -> Vec<Block> {
         vec![Block::Paragraph(vec![Inline::Text(text)])]
       }
     }
+  }
+}
+
+/// Convert an HTML block into our block IR.
+///
+/// Handles special cases:
+/// - `<h1>`–`<h6>` → `Block::Heading` (with optional center alignment)
+/// - `<p align="center">` → `Block::Aligned` wrapping a paragraph
+/// - Everything else → `Block::Paragraph` with parsed inlines
+fn html_block_to_blocks(literal: &str) -> Vec<Block> {
+  let trimmed = literal.trim();
+
+  // Check for HTML headings: <h1>...<h6>
+  if let Some((level, inner)) = html::parse_html_heading(trimmed) {
+    let centered = html::is_centered_paragraph(trimmed);
+    let content = if inner.is_empty() {
+      Vec::new()
+    } else {
+      vec![Inline::Text(html::decode_html_entities(&inner))]
+    };
+    let heading = Block::Heading { level, content };
+    if centered {
+      return vec![Block::Aligned {
+        center: true,
+        blocks: vec![heading],
+      }];
+    }
+    return vec![heading];
+  }
+
+  // Check for centered paragraphs: <p align="center">
+  if html::is_centered_paragraph(trimmed) {
+    let inlines = html::parse_html_to_inlines(trimmed);
+    if !inlines.is_empty() {
+      return vec![Block::Aligned {
+        center: true,
+        blocks: vec![Block::Paragraph(inlines)],
+      }];
+    }
+    return Vec::new();
+  }
+
+  // Default: parse to inlines and wrap in paragraph
+  let inlines = html::parse_html_to_inlines(literal);
+  if inlines.is_empty() {
+    Vec::new()
+  } else {
+    vec![Block::Paragraph(inlines)]
   }
 }
 
@@ -357,5 +399,68 @@ mod tests {
   fn html_comment_filtered() {
     let blocks = parse_comrak("<!-- this is a comment -->");
     assert!(blocks.is_empty(), "comment should produce no blocks");
+  }
+
+  #[test]
+  fn html_heading_h1() {
+    let blocks = parse_comrak("<h1>Big Title</h1>");
+    assert_eq!(blocks.len(), 1);
+    match &blocks[0] {
+      Block::Heading { level, content } => {
+        assert_eq!(*level, 1);
+        assert_eq!(inline_to_plain_text(content), "Big Title");
+      }
+      _ => panic!("expected Heading, got: {:?}", blocks[0]),
+    }
+  }
+
+  #[test]
+  fn html_heading_centered() {
+    let blocks = parse_comrak(r#"<h2 align="center">Centered</h2>"#);
+    assert_eq!(blocks.len(), 1);
+    match &blocks[0] {
+      Block::Aligned {
+        center: true,
+        blocks: inner,
+      } => {
+        assert_eq!(inner.len(), 1);
+        match &inner[0] {
+          Block::Heading { level, content } => {
+            assert_eq!(*level, 2);
+            assert_eq!(inline_to_plain_text(content), "Centered");
+          }
+          _ => panic!("expected Heading inside Aligned"),
+        }
+      }
+      _ => panic!("expected Aligned, got: {:?}", blocks[0]),
+    }
+  }
+
+  #[test]
+  fn html_centered_paragraph() {
+    let blocks = parse_comrak(r#"<p align="center">Centered text</p>"#);
+    assert_eq!(blocks.len(), 1);
+    match &blocks[0] {
+      Block::Aligned {
+        center: true,
+        blocks: inner,
+      } => {
+        assert_eq!(inner.len(), 1);
+        matches!(&inner[0], Block::Paragraph(_));
+      }
+      _ => panic!("expected Aligned, got: {:?}", blocks[0]),
+    }
+  }
+
+  #[test]
+  fn html_img_block() {
+    let blocks = parse_comrak(r#"<img src="logo.png" alt="Logo" width="100">"#);
+    assert!(!blocks.is_empty());
+    match &blocks[0] {
+      Block::Paragraph(inlines) => {
+        assert!(inlines.iter().any(|i| matches!(i, Inline::Image { .. })));
+      }
+      _ => panic!("expected Paragraph with Image"),
+    }
   }
 }

@@ -176,6 +176,34 @@ Centered content via HTML align attribute.
 
 </div>
 
+## HTML: Complex Blocks (Étape 9)
+
+### `<picture>` element — dark/light theme
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/zed-industries/zed/main/assets/icons/logo_96.svg">
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/zed-industries/zed/main/assets/icons/logo_96.svg">
+  <img src="https://zed.dev/img/logo.png" alt="Zed Logo" width="96">
+</picture>
+
+### `<img>` in HTML block
+
+<img src="https://img.shields.io/badge/Rust-1.80-orange" alt="Rust badge" width="120">
+
+### HTML headings `<h1>`–`<h6>`
+
+<h3>H3 via HTML tag</h3>
+
+<h4 align="center">Centered H4 via HTML</h4>
+
+### Centered `<p>`
+
+<p align="center">This paragraph is centered via <code>align="center"</code>.</p>
+
+### `<sub>` / `<sup>` (degraded to text)
+
+H<sub>2</sub>O — water formula. E = mc<sup>2</sup>.
+
 ## GitHub Issue Auto-linking
 
 With `github_issue_reference_context` = `zed-industries/zed`:

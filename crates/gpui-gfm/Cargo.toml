@@ -9,3 +9,4 @@ path = "lib.rs"
 [dependencies]
 gpui.workspace = true
 comrak.workspace = true
+tl.workspace = true

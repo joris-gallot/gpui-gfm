@@ -99,12 +99,11 @@ fn render_block(
         let mut aligned = div().flex().flex_col().w_full().min_w_0().gap_2();
         for block in blocks {
           aligned = aligned.child(
-            div().flex().w_full().min_w_0().justify_center().child(
-              div()
-                .text_center()
-                .min_w_0()
-                .child(render_block(block, options, indent, cx)),
-            ),
+            div()
+              .w_full()
+              .min_w_0()
+              .text_center()
+              .child(render_block(block, options, indent, cx)),
           );
         }
         aligned.into_any_element()
