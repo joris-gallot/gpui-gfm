@@ -11,8 +11,12 @@ use super::inline::render_inline_text;
 const TABLE_CELL_MIN_WIDTH_PX: f32 = 64.0;
 /// Horizontal padding per cell.
 const TABLE_CELL_HORIZONTAL_PADDING_PX: f32 = 24.0;
-/// Approximate character width for column sizing.
-const TABLE_INLINE_CHAR_WIDTH_PX: f32 = 7.2;
+/// Approximate character width for column sizing (body text).
+const TABLE_INLINE_CHAR_WIDTH_PX: f32 = 7.5;
+/// Approximate character width for inline code (monospace, slightly wider).
+const TABLE_CODE_CHAR_WIDTH_PX: f32 = 8.4;
+/// Extra width for backtick delimiters / code background padding.
+const TABLE_CODE_PADDING_PX: f32 = 10.0;
 
 /// Render a GFM table.
 pub fn render_table(table: &Table, options: &MarkdownRenderOptions, cx: &App) -> AnyElement {
@@ -33,7 +37,8 @@ pub fn render_table(table: &Table, options: &MarkdownRenderOptions, cx: &App) ->
       .map_or(&[][..], |cell| cell.as_slice());
     header_row = header_row.child(
       div()
-        .w(px(*width))
+        .min_w(px(*width))
+        .flex_shrink_0()
         .px_3()
         .py_2()
         .when(col + 1 < column_count, |this| {
@@ -58,7 +63,8 @@ pub fn render_table(table: &Table, options: &MarkdownRenderOptions, cx: &App) ->
       let cell = row.get(col).map_or(&[][..], |cell| cell.as_slice());
       row_el = row_el.child(
         div()
-          .w(px(*width))
+          .min_w(px(*width))
+          .flex_shrink_0()
           .px_3()
           .py_2()
           .when(col + 1 < column_count, |this| {
@@ -117,7 +123,37 @@ fn compute_column_widths(table: &Table, column_count: usize) -> Vec<f32> {
 
 /// Estimate the pixel width of a table cell's content.
 fn estimate_cell_width(inlines: &[Inline]) -> f32 {
-  let text = inline_to_plain_text(inlines);
-  let char_width = text.len() as f32 * TABLE_INLINE_CHAR_WIDTH_PX;
-  (char_width + TABLE_CELL_HORIZONTAL_PADDING_PX).max(TABLE_CELL_MIN_WIDTH_PX)
+  let mut width = 0.0f32;
+  estimate_cell_width_inner(inlines, &mut width, false);
+  (width + TABLE_CELL_HORIZONTAL_PADDING_PX).max(TABLE_CELL_MIN_WIDTH_PX)
+}
+
+fn estimate_cell_width_inner(inlines: &[Inline], width: &mut f32, in_code: bool) {
+  for inline in inlines {
+    match inline {
+      Inline::Text(text) => {
+        let char_px = if in_code {
+          TABLE_CODE_CHAR_WIDTH_PX
+        } else {
+          TABLE_INLINE_CHAR_WIDTH_PX
+        };
+        *width += text.len() as f32 * char_px;
+      }
+      Inline::Code(text) => {
+        *width += text.len() as f32 * TABLE_CODE_CHAR_WIDTH_PX + TABLE_CODE_PADDING_PX;
+      }
+      Inline::Strong(children) | Inline::Emphasis(children) | Inline::Strikethrough(children) => {
+        estimate_cell_width_inner(children, width, in_code);
+      }
+      Inline::Link { content, .. } => {
+        estimate_cell_width_inner(content, width, in_code);
+      }
+      Inline::SoftBreak | Inline::HardBreak => {
+        *width += TABLE_INLINE_CHAR_WIDTH_PX;
+      }
+      Inline::Image { alt, .. } => {
+        *width += alt.len() as f32 * TABLE_INLINE_CHAR_WIDTH_PX;
+      }
+    }
+  }
 }
