@@ -16,10 +16,84 @@ use gpui::{AnyElement, App, Hsla, SharedString, div, prelude::*};
 
 use crate::github::GithubCodeReferencePreview;
 use crate::github::GithubIssueReferenceContext;
-use crate::types::ParsedMarkdown;
+use crate::types::{CodeBlock, ParsedMarkdown, Table};
 
 /// A link click handler.
 pub type LinkHandlerFn = dyn Fn(&str, &mut gpui::Window, &mut App) + Send + Sync;
+
+// ---------------------------------------------------------------------------
+// Render override function signatures
+// ---------------------------------------------------------------------------
+
+/// Override for paragraph rendering.
+///
+/// Receives the default-rendered paragraph element and the app context.
+/// Return a replacement element.
+pub type ParagraphRenderFn = dyn Fn(AnyElement, &App) -> AnyElement + Send + Sync;
+
+/// Override for heading rendering.
+///
+/// Receives the heading level (1–6), the default-rendered element, and the app context.
+pub type HeadingRenderFn = dyn Fn(u8, AnyElement, &App) -> AnyElement + Send + Sync;
+
+/// Override for code block rendering.
+///
+/// Receives the raw [`CodeBlock`] data (language hint + code string) and the app context.
+/// The override is responsible for building the entire element from scratch.
+pub type CodeBlockRenderFn = dyn Fn(&CodeBlock, &App) -> AnyElement + Send + Sync;
+
+/// Override for list rendering.
+///
+/// Receives the default-rendered list container element and the app context.
+pub type ListRenderFn = dyn Fn(AnyElement, &App) -> AnyElement + Send + Sync;
+
+/// Override for individual list item rendering.
+///
+/// Receives a [`ListItemView`] with the bullet string, checkbox state, and
+/// rendered content element.
+pub type ListItemRenderFn = dyn Fn(ListItemView, &App) -> AnyElement + Send + Sync;
+
+/// Override for block quote rendering.
+///
+/// Receives the default-rendered block quote element and the app context.
+pub type BlockQuoteRenderFn = dyn Fn(AnyElement, &App) -> AnyElement + Send + Sync;
+
+/// Override for thematic break rendering.
+///
+/// Receives only the app context — no default element (since the default is trivial).
+pub type ThematicBreakRenderFn = dyn Fn(&App) -> AnyElement + Send + Sync;
+
+/// Override for table rendering.
+///
+/// Receives the raw [`Table`] data and the app context.
+/// The override is responsible for building the entire element from scratch.
+pub type TableRenderFn = dyn Fn(&Table, &App) -> AnyElement + Send + Sync;
+
+/// Data passed to the list item render override.
+pub struct ListItemView {
+  /// The bullet or marker string (`"•"`, `"1."`, `"☑"`, `"☐"`, …).
+  pub bullet: String,
+  /// Task-list checkbox state: `Some(true)` = checked, `Some(false)` = unchecked, `None` = no checkbox.
+  pub checked: Option<bool>,
+  /// The rendered content of the list item.
+  pub content: AnyElement,
+}
+
+/// Optional closures that override the default rendering for each block type.
+///
+/// When a closure is `Some`, it replaces the default renderer entirely.
+/// When `None`, the default built-in renderer is used.
+#[derive(Clone, Default)]
+pub struct RenderOverrides {
+  pub paragraph: Option<Arc<ParagraphRenderFn>>,
+  pub heading: Option<Arc<HeadingRenderFn>>,
+  pub code_block: Option<Arc<CodeBlockRenderFn>>,
+  pub list: Option<Arc<ListRenderFn>>,
+  pub list_item: Option<Arc<ListItemRenderFn>>,
+  pub block_quote: Option<Arc<BlockQuoteRenderFn>>,
+  pub thematic_break: Option<Arc<ThematicBreakRenderFn>>,
+  pub table: Option<Arc<TableRenderFn>>,
+}
 
 /// What to do after a link click.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -234,6 +308,10 @@ pub struct MarkdownRenderOptions {
   /// in the markdown source matches a key, it is replaced by a card showing
   /// the file label, line range, and code snippet.
   pub github_code_reference_previews: Option<Arc<HashMap<Arc<str>, GithubCodeReferencePreview>>>,
+  /// Optional render overrides for each block type.
+  ///
+  /// When a closure is set, it replaces the default built-in renderer.
+  pub overrides: RenderOverrides,
 }
 
 impl MarkdownRenderOptions {
@@ -279,6 +357,11 @@ impl MarkdownRenderOptions {
     previews: Arc<HashMap<Arc<str>, GithubCodeReferencePreview>>,
   ) -> Self {
     self.github_code_reference_previews = Some(previews);
+    self
+  }
+
+  pub fn with_overrides(mut self, overrides: RenderOverrides) -> Self {
+    self.overrides = overrides;
     self
   }
 
@@ -430,5 +513,188 @@ mod tests {
     state.reset_counter();
     // State should persist
     assert!(state.is_open(0, false));
+  }
+
+  // --- Render override tests (require gpui::test) ---
+
+  use std::sync::atomic::{AtomicUsize, Ordering};
+
+  #[gpui::test]
+  fn override_heading_is_called(cx: &mut gpui::TestAppContext) {
+    let counter = Arc::new(AtomicUsize::new(0));
+    let counter_clone = counter.clone();
+    let options = MarkdownRenderOptions {
+      overrides: RenderOverrides {
+        heading: Some(Arc::new(move |level, el, _cx| {
+          counter_clone.fetch_add(1, Ordering::Relaxed);
+          assert!(level >= 1 && level <= 6);
+          el
+        })),
+        ..Default::default()
+      },
+      ..Default::default()
+    };
+    cx.update(|cx| {
+      let _ = crate::render::render_markdown("# Hello\n\n## World\n", &options, cx);
+    });
+    assert_eq!(counter.load(Ordering::Relaxed), 2);
+  }
+
+  #[gpui::test]
+  fn override_paragraph_is_called(cx: &mut gpui::TestAppContext) {
+    let counter = Arc::new(AtomicUsize::new(0));
+    let counter_clone = counter.clone();
+    let options = MarkdownRenderOptions {
+      overrides: RenderOverrides {
+        paragraph: Some(Arc::new(move |el, _cx| {
+          counter_clone.fetch_add(1, Ordering::Relaxed);
+          el
+        })),
+        ..Default::default()
+      },
+      ..Default::default()
+    };
+    cx.update(|cx| {
+      let _ =
+        crate::render::render_markdown("First paragraph.\n\nSecond paragraph.\n", &options, cx);
+    });
+    assert_eq!(counter.load(Ordering::Relaxed), 2);
+  }
+
+  #[gpui::test]
+  fn override_code_block_is_called(cx: &mut gpui::TestAppContext) {
+    let counter = Arc::new(AtomicUsize::new(0));
+    let counter_clone = counter.clone();
+    let options = MarkdownRenderOptions {
+      overrides: RenderOverrides {
+        code_block: Some(Arc::new(move |code, _cx| {
+          counter_clone.fetch_add(1, Ordering::Relaxed);
+          assert_eq!(code.lang.as_deref(), Some("rust"));
+          assert!(code.value.contains("fn main"));
+          div().into_any_element()
+        })),
+        ..Default::default()
+      },
+      ..Default::default()
+    };
+    cx.update(|cx| {
+      let _ = crate::render::render_markdown("```rust\nfn main() {}\n```\n", &options, cx);
+    });
+    assert_eq!(counter.load(Ordering::Relaxed), 1);
+  }
+
+  #[gpui::test]
+  fn override_thematic_break_is_called(cx: &mut gpui::TestAppContext) {
+    let counter = Arc::new(AtomicUsize::new(0));
+    let counter_clone = counter.clone();
+    let options = MarkdownRenderOptions {
+      overrides: RenderOverrides {
+        thematic_break: Some(Arc::new(move |_cx| {
+          counter_clone.fetch_add(1, Ordering::Relaxed);
+          div().into_any_element()
+        })),
+        ..Default::default()
+      },
+      ..Default::default()
+    };
+    cx.update(|cx| {
+      let _ = crate::render::render_markdown("Above\n\n---\n\nBelow\n", &options, cx);
+    });
+    assert_eq!(counter.load(Ordering::Relaxed), 1);
+  }
+
+  #[gpui::test]
+  fn override_block_quote_is_called(cx: &mut gpui::TestAppContext) {
+    let counter = Arc::new(AtomicUsize::new(0));
+    let counter_clone = counter.clone();
+    let options = MarkdownRenderOptions {
+      overrides: RenderOverrides {
+        block_quote: Some(Arc::new(move |el, _cx| {
+          counter_clone.fetch_add(1, Ordering::Relaxed);
+          el
+        })),
+        ..Default::default()
+      },
+      ..Default::default()
+    };
+    cx.update(|cx| {
+      let _ = crate::render::render_markdown("> Quote text\n", &options, cx);
+    });
+    assert_eq!(counter.load(Ordering::Relaxed), 1);
+  }
+
+  #[gpui::test]
+  fn override_table_is_called(cx: &mut gpui::TestAppContext) {
+    let counter = Arc::new(AtomicUsize::new(0));
+    let counter_clone = counter.clone();
+    let options = MarkdownRenderOptions {
+      overrides: RenderOverrides {
+        table: Some(Arc::new(move |table, _cx| {
+          counter_clone.fetch_add(1, Ordering::Relaxed);
+          assert_eq!(table.headers.len(), 2);
+          div().into_any_element()
+        })),
+        ..Default::default()
+      },
+      ..Default::default()
+    };
+    cx.update(|cx| {
+      let _ = crate::render::render_markdown("| A | B |\n|---|---|\n| 1 | 2 |\n", &options, cx);
+    });
+    assert_eq!(counter.load(Ordering::Relaxed), 1);
+  }
+
+  #[gpui::test]
+  fn override_list_is_called(cx: &mut gpui::TestAppContext) {
+    let counter = Arc::new(AtomicUsize::new(0));
+    let counter_clone = counter.clone();
+    let options = MarkdownRenderOptions {
+      overrides: RenderOverrides {
+        list: Some(Arc::new(move |el, _cx| {
+          counter_clone.fetch_add(1, Ordering::Relaxed);
+          el
+        })),
+        ..Default::default()
+      },
+      ..Default::default()
+    };
+    cx.update(|cx| {
+      let _ = crate::render::render_markdown("- A\n- B\n- C\n", &options, cx);
+    });
+    assert_eq!(counter.load(Ordering::Relaxed), 1);
+  }
+
+  #[gpui::test]
+  fn override_list_item_is_called(cx: &mut gpui::TestAppContext) {
+    let counter = Arc::new(AtomicUsize::new(0));
+    let counter_clone = counter.clone();
+    let options = MarkdownRenderOptions {
+      overrides: RenderOverrides {
+        list_item: Some(Arc::new(move |item, _cx| {
+          counter_clone.fetch_add(1, Ordering::Relaxed);
+          assert_eq!(item.bullet, "•");
+          item.content
+        })),
+        ..Default::default()
+      },
+      ..Default::default()
+    };
+    cx.update(|cx| {
+      let _ = crate::render::render_markdown("- One\n- Two\n", &options, cx);
+    });
+    assert_eq!(counter.load(Ordering::Relaxed), 2);
+  }
+
+  #[gpui::test]
+  fn no_overrides_uses_defaults(cx: &mut gpui::TestAppContext) {
+    // No overrides set → should render without panic.
+    let options = MarkdownRenderOptions::default();
+    cx.update(|cx| {
+      let _ = crate::render::render_markdown(
+        "# Title\n\nText.\n\n> Quote\n\n---\n\n```rs\ncode\n```\n\n- A\n- B\n\n| H |\n|---|\n| V |\n",
+        &options,
+        cx,
+      );
+    });
   }
 }

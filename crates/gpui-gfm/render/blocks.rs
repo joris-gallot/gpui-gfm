@@ -4,6 +4,7 @@ use gpui::{AnyElement, App, MouseButton, SharedString, div, prelude::*, px};
 
 use crate::types::*;
 
+use super::ListItemView;
 use super::MarkdownRenderOptions;
 use super::code_block::render_code_block;
 use super::image::{is_block_image, render_block_image};
@@ -50,12 +51,17 @@ fn render_block(
       if is_block_image(inlines) {
         render_block_image(inlines, options, cx)
       } else {
-        div()
+        let el = div()
           .whitespace_normal()
           .text_sm()
           .text_color(theme.foreground)
           .child(render_inline_text(inlines, options, cx))
-          .into_any_element()
+          .into_any_element();
+        if let Some(override_fn) = options.overrides.paragraph.as_ref() {
+          override_fn(el, cx)
+        } else {
+          el
+        }
       }
     }
 
@@ -69,28 +75,59 @@ fn render_block(
         5 => el.text_base().font_weight(gpui::FontWeight::MEDIUM),
         _ => el.text_sm().font_weight(gpui::FontWeight::MEDIUM),
       };
-      el.child(render_inline_text(content, options, cx))
-        .into_any_element()
+      let el = el
+        .child(render_inline_text(content, options, cx))
+        .into_any_element();
+      if let Some(override_fn) = options.overrides.heading.as_ref() {
+        override_fn(*level, el, cx)
+      } else {
+        el
+      }
     }
 
     Block::List(list) => render_list(list, options, indent, cx),
 
-    Block::CodeBlock(code) => render_code_block(code, options, cx),
+    Block::CodeBlock(code) => {
+      if let Some(override_fn) = options.overrides.code_block.as_ref() {
+        override_fn(code, cx)
+      } else {
+        render_code_block(code, options, cx)
+      }
+    }
 
-    Block::BlockQuote(children) => div()
-      .border_l_2()
-      .border_color(theme.muted_foreground)
-      .pl(px(8.0))
-      .child(render_blocks(children, options, indent + 1, cx))
-      .into_any_element(),
+    Block::BlockQuote(children) => {
+      let el = div()
+        .border_l_2()
+        .border_color(theme.muted_foreground)
+        .pl(px(8.0))
+        .child(render_blocks(children, options, indent + 1, cx))
+        .into_any_element();
+      if let Some(override_fn) = options.overrides.block_quote.as_ref() {
+        override_fn(el, cx)
+      } else {
+        el
+      }
+    }
 
-    Block::ThematicBreak => div()
-      .h(px(1.0))
-      .bg(theme.border)
-      .rounded_md()
-      .into_any_element(),
+    Block::ThematicBreak => {
+      if let Some(override_fn) = options.overrides.thematic_break.as_ref() {
+        override_fn(cx)
+      } else {
+        div()
+          .h(px(1.0))
+          .bg(theme.border)
+          .rounded_md()
+          .into_any_element()
+      }
+    }
 
-    Block::Table(table) => render_table(table, options, cx),
+    Block::Table(table) => {
+      if let Some(override_fn) = options.overrides.table.as_ref() {
+        override_fn(table, cx)
+      } else {
+        render_table(table, options, cx)
+      }
+    }
 
     Block::Details(details) => render_details(details, options, indent, cx),
 
@@ -144,25 +181,42 @@ fn render_list(
 
     let item_content = render_list_item_blocks(&item.blocks, options, cx);
 
-    let row = div()
-      .flex()
-      .items_start()
-      .w_full()
-      .min_w_0()
-      .child(
-        div()
-          .flex_none()
-          .text_sm()
-          .text_color(theme.foreground)
-          .pr(px(4.0))
-          .child(bullet),
+    let row = if let Some(override_fn) = options.overrides.list_item.as_ref() {
+      override_fn(
+        ListItemView {
+          bullet,
+          checked: item.checked,
+          content: item_content,
+        },
+        cx,
       )
-      .child(div().min_w_0().flex_1().child(item_content));
+    } else {
+      div()
+        .flex()
+        .items_start()
+        .w_full()
+        .min_w_0()
+        .child(
+          div()
+            .flex_none()
+            .text_sm()
+            .text_color(theme.foreground)
+            .pr(px(4.0))
+            .child(bullet),
+        )
+        .child(div().min_w_0().flex_1().child(item_content))
+        .into_any_element()
+    };
 
     container = container.child(row);
   }
 
-  container.into_any_element()
+  let el = container.into_any_element();
+  if let Some(override_fn) = options.overrides.list.as_ref() {
+    override_fn(el, cx)
+  } else {
+    el
+  }
 }
 
 /// Render the blocks within a list item.

@@ -5,7 +5,7 @@ use gpui::{
   SharedString, Window, WindowBounds, WindowOptions, actions, div, prelude::*, px, size,
 };
 use gpui_gfm::github::{GithubCodeReferencePreview, GithubIssueReferenceContext};
-use gpui_gfm::render::{MarkdownRenderOptions, MarkdownTheme};
+use gpui_gfm::render::{MarkdownRenderOptions, MarkdownTheme, RenderOverrides};
 use input::*;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -250,6 +250,8 @@ https://github.com/other/repo/blob/main/file.rs#L1
 | `details_state` | Shared state for toggle persistence |
 | `github_issue_reference_context` | `zed-industries/zed` (auto-links `#123`) |
 | `github_code_reference_previews` | 1 preview card for `editor.rs#L10-L14` |
+| `overrides.heading` | Wraps headings with left accent border |
+| `overrides.thematic_break` | Rainbow gradient line instead of plain gray |
 
 ---
 
@@ -627,6 +629,34 @@ fn main() {
                 repo: "zed".into(),
               }),
               github_code_reference_previews: Some(Arc::new(code_previews)),
+              overrides: RenderOverrides {
+                heading: Some(Arc::new(|_level, el, _cx| {
+                  div()
+                    .border_l_2()
+                    .border_color(gpui::Hsla {
+                      h: 0.58,
+                      s: 0.7,
+                      l: 0.5,
+                      a: 1.0,
+                    })
+                    .pl(px(8.0))
+                    .child(el)
+                    .into_any_element()
+                })),
+                thematic_break: Some(Arc::new(|_cx| {
+                  div()
+                    .h(px(2.0))
+                    .rounded_md()
+                    .bg(gpui::Hsla {
+                      h: 0.58,
+                      s: 0.7,
+                      l: 0.5,
+                      a: 1.0,
+                    })
+                    .into_any_element()
+                })),
+                ..Default::default()
+              },
               ..Default::default()
             },
             focus_handle: cx.focus_handle(),
