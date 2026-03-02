@@ -98,6 +98,37 @@ def fibonacci(n: int) -> int:
     return fibonacci(n - 1) + fibonacci(n - 2)
 ```
 
+Long code block (>10 lines → vertical scroll):
+
+```rust
+use std::collections::HashMap;
+
+/// A simple in-memory key-value store.
+pub struct Store {
+    data: HashMap<String, String>,
+}
+
+impl Store {
+    pub fn new() -> Self {
+        Self {
+            data: HashMap::new(),
+        }
+    }
+
+    pub fn get(&self, key: &str) -> Option<&String> {
+        self.data.get(key)
+    }
+
+    pub fn set(&mut self, key: String, value: String) {
+        self.data.insert(key, value);
+    }
+
+    pub fn delete(&mut self, key: &str) -> bool {
+        self.data.remove(key).is_some()
+    }
+}
+```
+
 ## Indented Code Block (§4.4)
 
     This is an indented code block.
@@ -246,7 +277,7 @@ https://github.com/other/repo/blob/main/file.rs#L1
 | `code_font_family` | Menlo (monospace) |
 | `image_base_url` | `https://raw.githubusercontent.com/owner/repo/main` |
 | `image_loader` | `None` (uses gpui's built-in `img()` loader) |
-| `expand_code_blocks` | `false` (scroll cap at 400px) |
+| `expand_code_blocks` | `false` (scroll Y after 10 lines) |
 | `on_link` | Custom handler: logs URL to stdout |
 | `details_state` | Shared state for toggle persistence |
 | `github_issue_reference_context` | `zed-industries/zed` (auto-links `#123`) |

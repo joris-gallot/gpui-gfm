@@ -6,8 +6,8 @@ use crate::types::CodeBlock;
 
 use super::MarkdownRenderOptions;
 
-/// Maximum height before scroll kicks in.
-const CODE_BLOCK_MAX_HEIGHT_PX: f32 = 400.0;
+/// Maximum height (px) before vertical scroll kicks in.
+const CODE_BLOCK_MAX_HEIGHT_PX: f32 = 500.0;
 const CODE_BLOCK_PADDING_X_PX: f32 = 12.0;
 const CODE_BLOCK_PADDING_TOP_PX: f32 = 8.0;
 const CODE_BLOCK_PADDING_BOTTOM_PX: f32 = 8.0;
@@ -44,7 +44,7 @@ pub fn render_code_block(
 
   // Copy button — positioned inside the code area wrapper (below header)
   let copy_btn_id: SharedString = format!("md-copy-{:x}", code as *const CodeBlock as usize).into();
-  let clipboard_value = display_value;
+  let clipboard_value = display_value.clone();
   let hover_bg = theme.border;
 
   let copy_button = div()
@@ -99,13 +99,21 @@ pub fn render_code_block(
     .text_color(theme.foreground)
     .font(code_font)
     .whitespace_nowrap()
-    .overflow_x_scroll()
-    .overflow_y_scroll()
-    .child(text);
+    .overflow_x_scroll();
 
+  // Cap height and enable Y scroll (no-op for short blocks).
+  // Stop scroll-wheel propagation so the parent container doesn't scroll
+  // simultaneously (scroll chaining).
   if !options.expand_code_blocks {
-    code_area = code_area.max_h(px(CODE_BLOCK_MAX_HEIGHT_PX));
+    code_area = code_area
+      .max_h(px(CODE_BLOCK_MAX_HEIGHT_PX))
+      .overflow_y_scroll()
+      .on_scroll_wheel(|_, _, cx| {
+        cx.stop_propagation();
+      });
   }
+
+  code_area = code_area.child(text);
 
   // Wrap code area + copy button in a relative container so the button
   // is positioned relative to the code area (below the header).
