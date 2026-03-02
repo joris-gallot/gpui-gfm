@@ -15,6 +15,7 @@ pub mod render;
 pub mod types;
 
 // Re-export main public API.
+pub use github::{GithubCodeReferencePreview, GithubIssueReferenceContext};
 pub use parse::{parse_gfm, parse_markdown};
 pub use render::{
   DetailsState, ImageLoaderFn, MarkdownRenderOptions, MarkdownTheme, render_markdown,

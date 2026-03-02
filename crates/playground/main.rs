@@ -4,9 +4,10 @@ use gpui::{
   App, Application, Bounds, Context, Entity, FocusHandle, Focusable, KeyBinding, MouseButton,
   SharedString, Window, WindowBounds, WindowOptions, actions, div, prelude::*, px, size,
 };
-use gpui_gfm::github::GithubIssueReferenceContext;
+use gpui_gfm::github::{GithubCodeReferencePreview, GithubIssueReferenceContext};
 use gpui_gfm::render::{MarkdownRenderOptions, MarkdownTheme};
 use input::*;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 actions!(playground, [Quit, RenderMarkdown, FetchReadme]);
@@ -176,7 +177,7 @@ Centered content via HTML align attribute.
 
 </div>
 
-## HTML: Complex Blocks (Étape 9)
+## HTML: Complex Blocks
 
 ### `<picture>` element — dark/light theme
 
@@ -216,6 +217,26 @@ With `github_issue_reference_context` = `zed-industries/zed`:
 - Already a link: [#100](https://github.com/zed-industries/zed/issues/100) (not double-linked).
 - **Bold #55** works too.
 
+## GitHub Code Reference Preview
+
+A standalone URL line matching a known code preview is replaced by a card:
+
+**Bare URL on its own line:**
+
+https://github.com/zed-industries/zed/blob/abc1234def5678/crates/editor/src/editor.rs#L10-L14
+
+**Autolink:**
+
+<https://github.com/zed-industries/zed/blob/abc1234def5678/crates/editor/src/editor.rs#L10-L14>
+
+**Markdown link (label matches URL):**
+
+[https://github.com/zed-industries/zed/blob/abc1234def5678/crates/editor/src/editor.rs#L10-L14](https://github.com/zed-industries/zed/blob/abc1234def5678/crates/editor/src/editor.rs#L10-L14)
+
+**Non-matching URL stays as text:**
+
+https://github.com/other/repo/blob/main/file.rs#L1
+
 ## Render Options Demo
 
 | Option | Value |
@@ -228,6 +249,7 @@ With `github_issue_reference_context` = `zed-industries/zed`:
 | `on_link` | Custom handler: logs URL to stdout |
 | `details_state` | Shared state for toggle persistence |
 | `github_issue_reference_context` | `zed-industries/zed` (auto-links `#123`) |
+| `github_code_reference_previews` | 1 preview card for `editor.rs#L10-L14` |
 
 ---
 
@@ -570,6 +592,26 @@ fn main() {
                 window.dispatch_action(Box::new(FetchReadme), cx);
               })
           });
+          let code_preview_url: Arc<str> = "https://github.com/zed-industries/zed/blob/abc1234def5678/crates/editor/src/editor.rs#L10-L14".into();
+          let mut code_previews = HashMap::new();
+          code_previews.insert(
+            code_preview_url.clone(),
+            GithubCodeReferencePreview {
+              url: code_preview_url,
+              repo: "zed-industries/zed".into(),
+              path: "crates/editor/src/editor.rs".into(),
+              reference: "abc1234def5678901234567890abcdef12345678".into(),
+              start_line: 10,
+              end_line: 14,
+              snippets: vec![
+                "    pub fn new(".into(),
+                "        window: &mut Window,".into(),
+                "        cx: &mut Context<Self>,".into(),
+                "    ) -> Self {".into(),
+                "        let buffer = cx.new(|cx| Buffer::new(cx));".into(),
+              ],
+            },
+          );
           cx.new(|cx| MarkdownPlayground {
             text_input,
             url_input,
@@ -584,6 +626,7 @@ fn main() {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
               }),
+              github_code_reference_previews: Some(Arc::new(code_previews)),
               ..Default::default()
             },
             focus_handle: cx.focus_handle(),

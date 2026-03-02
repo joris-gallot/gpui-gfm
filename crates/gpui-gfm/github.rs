@@ -1,5 +1,7 @@
-//! GitHub-specific features: blob line references, issue reference auto-linking.
+//! GitHub-specific features: blob line references, issue reference auto-linking,
+//! and code reference preview cards.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::types::Inline;
@@ -16,6 +18,29 @@ pub struct GithubBlobLineReference {
   pub path: String,
   pub start_line: usize,
   pub end_line: usize,
+}
+
+/// A code reference preview card — content provided by the consumer.
+///
+/// The consumer fetches file content from GitHub (or anywhere) and provides
+/// the snippet lines.  The renderer turns this into a clickable card with
+/// file label, line range, and code snippet.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GithubCodeReferencePreview {
+  /// Full GitHub URL to the code location.
+  pub url: Arc<str>,
+  /// Repository name (e.g. `"zed"`).
+  pub repo: Arc<str>,
+  /// File path inside the repo (e.g. `"src/lib.rs"`).
+  pub path: Arc<str>,
+  /// Git reference — branch, tag, or commit SHA.
+  pub reference: Arc<str>,
+  /// First line number shown (1-based).
+  pub start_line: usize,
+  /// Last line number shown (1-based, inclusive).
+  pub end_line: usize,
+  /// The code snippet lines (one entry per line).
+  pub snippets: Vec<Arc<str>>,
 }
 
 /// Context for auto-linking `#123` issue references.
@@ -217,6 +242,111 @@ pub fn extract_github_blob_line_references(text: &str) -> Vec<GithubBlobLineRefe
   refs
 }
 
+// -- Preview segment splitting -----------------------------------------------
+
+/// A segment of markdown source — either normal markdown text or a code
+/// reference preview that replaces a standalone URL line.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MarkdownPreviewSegment {
+  /// Normal markdown text to be parsed and rendered.
+  Markdown(String),
+  /// A code reference preview card that replaces a URL line.
+  Preview(GithubCodeReferencePreview),
+}
+
+/// Split a markdown source into segments, replacing standalone URL lines with
+/// preview cards when a matching preview is available.
+///
+/// A line matches if it is:
+/// - An exact URL match (bare URL on its own line)
+/// - An autolink `<url>`
+/// - A markdown link `[...](url)` that is the only thing on the line
+pub fn split_markdown_preview_segments(
+  source: &str,
+  previews: &HashMap<Arc<str>, GithubCodeReferencePreview>,
+) -> Vec<MarkdownPreviewSegment> {
+  if source.is_empty() || previews.is_empty() {
+    return vec![MarkdownPreviewSegment::Markdown(source.to_string())];
+  }
+
+  let mut segments = Vec::new();
+  let mut markdown = String::new();
+  let mut has_preview = false;
+
+  for raw_line in source.split_inclusive('\n') {
+    let line = raw_line.strip_suffix('\n').unwrap_or(raw_line);
+    let trimmed = line.trim();
+
+    let line_preview = if trimmed.is_empty() {
+      None
+    } else if let Some(inner) = trimmed.strip_prefix('<').and_then(|s| s.strip_suffix('>')) {
+      // Autolink: <url>
+      previews.get(inner).cloned()
+    } else {
+      // Check markdown link: [text](url)
+      let md_link_match = previews
+        .iter()
+        .find(|(url, _)| line_is_markdown_link_to_url(trimmed, url.as_ref()))
+        .map(|(_, p)| p.clone());
+      // Or bare URL on its own
+      md_link_match.or_else(|| previews.get(trimmed).cloned())
+    };
+
+    if let Some(preview) = line_preview {
+      if !markdown.is_empty() {
+        segments.push(MarkdownPreviewSegment::Markdown(markdown.clone()));
+        markdown.clear();
+      }
+      segments.push(MarkdownPreviewSegment::Preview(preview));
+      has_preview = true;
+    } else {
+      markdown.push_str(raw_line);
+    }
+  }
+
+  if !markdown.is_empty() {
+    segments.push(MarkdownPreviewSegment::Markdown(markdown));
+  }
+
+  if !has_preview {
+    return vec![MarkdownPreviewSegment::Markdown(source.to_string())];
+  }
+
+  segments
+}
+
+/// Check if a line is a markdown link `[...](url)` pointing to the given URL.
+fn line_is_markdown_link_to_url(trimmed: &str, url: &str) -> bool {
+  if !trimmed.starts_with('[') || !trimmed.ends_with(')') {
+    return false;
+  }
+  let Some((_, rest)) = trimmed.split_once("](") else {
+    return false;
+  };
+  let Some(link_target) = rest.strip_suffix(')') else {
+    return false;
+  };
+  link_target == url
+}
+
+/// Shorten a git reference for display.
+///
+/// - SHA-like hex strings (>7 chars, all hex digits) → first 7 chars
+/// - Long references (>24 chars) → first 24 chars + `...`
+/// - Otherwise → as-is
+pub fn short_github_reference(reference: &str) -> String {
+  let trimmed = reference.trim();
+  if trimmed.len() > 7 && trimmed.chars().all(|ch| ch.is_ascii_hexdigit()) {
+    return trimmed[..7].to_string();
+  }
+  if trimmed.len() > 24 {
+    let mut shortened = trimmed[..24].to_string();
+    shortened.push_str("...");
+    return shortened;
+  }
+  trimmed.to_string()
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -399,5 +529,132 @@ mod tests {
     assert_eq!(result[0], Inline::Text("(".into()));
     assert!(matches!(&result[1], Inline::Link { url, .. } if url.ends_with("/123")));
     assert_eq!(result[2], Inline::Text(")".into()));
+  }
+
+  // --- Short reference tests ---
+
+  #[test]
+  fn short_ref_sha_truncated() {
+    assert_eq!(short_github_reference("abc123def456789"), "abc123d");
+  }
+
+  #[test]
+  fn short_ref_branch_name_kept() {
+    assert_eq!(short_github_reference("main"), "main");
+  }
+
+  #[test]
+  fn short_ref_long_branch_truncated() {
+    let long = "feature/my-very-long-branch-name-that-exceeds";
+    let result = short_github_reference(long);
+    assert_eq!(result.len(), 27); // 24 + "..."
+    assert!(result.ends_with("..."));
+  }
+
+  // --- Preview segment splitting tests ---
+
+  fn test_previews() -> HashMap<Arc<str>, GithubCodeReferencePreview> {
+    let url: Arc<str> = "https://github.com/owner/repo/blob/main/src/lib.rs#L10-L20".into();
+    let mut map = HashMap::new();
+    map.insert(
+      url.clone(),
+      GithubCodeReferencePreview {
+        url,
+        repo: "repo".into(),
+        path: "src/lib.rs".into(),
+        reference: "main".into(),
+        start_line: 10,
+        end_line: 20,
+        snippets: vec![
+          "fn main() {".into(),
+          "    println!(\"hello\");".into(),
+          "}".into(),
+        ],
+      },
+    );
+    map
+  }
+
+  #[test]
+  fn split_no_previews_returns_original() {
+    let source = "hello world\n";
+    let result = split_markdown_preview_segments(source, &HashMap::new());
+    assert_eq!(result.len(), 1);
+    assert!(matches!(&result[0], MarkdownPreviewSegment::Markdown(s) if s == source));
+  }
+
+  #[test]
+  fn split_bare_url_line() {
+    let previews = test_previews();
+    let url = previews.keys().next().unwrap();
+    let source = format!("before\n{url}\nafter\n");
+    let result = split_markdown_preview_segments(&source, &previews);
+    assert_eq!(result.len(), 3);
+    assert!(matches!(&result[0], MarkdownPreviewSegment::Markdown(s) if s == "before\n"));
+    assert!(matches!(&result[1], MarkdownPreviewSegment::Preview(_)));
+    assert!(matches!(&result[2], MarkdownPreviewSegment::Markdown(s) if s == "after\n"));
+  }
+
+  #[test]
+  fn split_autolink_line() {
+    let previews = test_previews();
+    let url = previews.keys().next().unwrap();
+    let source = format!("before\n<{url}>\nafter\n");
+    let result = split_markdown_preview_segments(&source, &previews);
+    assert_eq!(result.len(), 3);
+    assert!(matches!(&result[1], MarkdownPreviewSegment::Preview(_)));
+  }
+
+  #[test]
+  fn split_markdown_link_line() {
+    let previews = test_previews();
+    let url = previews.keys().next().unwrap();
+    let source = format!("before\n[see code]({url})\nafter\n");
+    let result = split_markdown_preview_segments(&source, &previews);
+    assert_eq!(result.len(), 3);
+    assert!(matches!(&result[1], MarkdownPreviewSegment::Preview(_)));
+  }
+
+  #[test]
+  fn split_non_matching_url_kept() {
+    let previews = test_previews();
+    let source = "before\nhttps://example.com\nafter\n";
+    let result = split_markdown_preview_segments(source, &previews);
+    assert_eq!(result.len(), 1);
+    assert!(matches!(&result[0], MarkdownPreviewSegment::Markdown(_)));
+  }
+
+  #[test]
+  fn line_label_single_line() {
+    let preview = GithubCodeReferencePreview {
+      url: "u".into(),
+      repo: "repo".into(),
+      path: "x.rs".into(),
+      reference: "abc123def456789".into(),
+      start_line: 42,
+      end_line: 42,
+      snippets: vec![],
+    };
+    let label = if preview.start_line == preview.end_line {
+      format!(
+        "Line {} in {}",
+        preview.start_line,
+        short_github_reference(&preview.reference)
+      )
+    } else {
+      format!(
+        "Lines {}-{} in {}",
+        preview.start_line,
+        preview.end_line,
+        short_github_reference(&preview.reference)
+      )
+    };
+    assert_eq!(label, "Line 42 in abc123d");
+  }
+
+  #[test]
+  fn line_label_range() {
+    let label = format!("Lines {}-{} in {}", 10, 20, short_github_reference("main"));
+    assert_eq!(label, "Lines 10-20 in main");
   }
 }

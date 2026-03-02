@@ -2,6 +2,7 @@
 
 pub mod blocks;
 pub mod code_block;
+pub mod code_preview;
 pub mod image;
 pub mod inline;
 pub mod table;
@@ -11,8 +12,9 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use gpui::{AnyElement, App, Hsla, SharedString};
+use gpui::{AnyElement, App, Hsla, SharedString, div, prelude::*};
 
+use crate::github::GithubCodeReferencePreview;
 use crate::github::GithubIssueReferenceContext;
 use crate::types::ParsedMarkdown;
 
@@ -226,6 +228,12 @@ pub struct MarkdownRenderOptions {
   /// Created automatically on first use. Persists across re-renders so
   /// toggle state is maintained.
   pub details_state: DetailsState,
+  /// Code reference preview cards.
+  ///
+  /// A map from GitHub blob URL → preview data. When a standalone URL line
+  /// in the markdown source matches a key, it is replaced by a card showing
+  /// the file label, line range, and code snippet.
+  pub github_code_reference_previews: Option<Arc<HashMap<Arc<str>, GithubCodeReferencePreview>>>,
 }
 
 impl MarkdownRenderOptions {
@@ -266,6 +274,14 @@ impl MarkdownRenderOptions {
     self
   }
 
+  pub fn with_github_code_reference_previews(
+    mut self,
+    previews: Arc<HashMap<Arc<str>, GithubCodeReferencePreview>>,
+  ) -> Self {
+    self.github_code_reference_previews = Some(previews);
+    self
+  }
+
   /// Get the theme, falling back to dark theme default.
   pub fn theme(&self) -> &MarkdownTheme {
     self.theme.as_ref().unwrap_or(&DEFAULT_DARK_THEME)
@@ -277,8 +293,53 @@ static DEFAULT_DARK_THEME: std::sync::LazyLock<MarkdownTheme> =
 
 /// Render a markdown source string to a GPUI element.
 pub fn render_markdown(source: &str, options: &MarkdownRenderOptions, cx: &App) -> AnyElement {
+  // If code reference previews are provided, split the source at matching
+  // URL lines and render each segment separately.
+  if let Some(previews) = &options.github_code_reference_previews {
+    if !previews.is_empty() {
+      return render_markdown_with_previews(source, previews, options, cx);
+    }
+  }
   let parsed = crate::parse::parse_markdown(source);
   render_parsed_markdown(&parsed, options, cx)
+}
+
+/// Render markdown with code reference preview cards replacing matching URL lines.
+fn render_markdown_with_previews(
+  source: &str,
+  previews: &HashMap<Arc<str>, GithubCodeReferencePreview>,
+  options: &MarkdownRenderOptions,
+  cx: &App,
+) -> AnyElement {
+  use crate::github::{MarkdownPreviewSegment, split_markdown_preview_segments};
+
+  let segments = split_markdown_preview_segments(source, previews);
+  let has_previews = segments
+    .iter()
+    .any(|s| matches!(s, MarkdownPreviewSegment::Preview(_)));
+
+  if !has_previews {
+    let parsed = crate::parse::parse_markdown(source);
+    return render_parsed_markdown(&parsed, options, cx);
+  }
+
+  let mut container = div().flex().flex_col();
+  for segment in &segments {
+    match segment {
+      MarkdownPreviewSegment::Markdown(markdown) => {
+        if !markdown.is_empty() {
+          let parsed = crate::parse::parse_markdown(markdown);
+          container = container.child(render_parsed_markdown(&parsed, options, cx));
+        }
+      }
+      MarkdownPreviewSegment::Preview(preview) => {
+        container = container.child(code_preview::render_code_reference_card(
+          preview, options, cx,
+        ));
+      }
+    }
+  }
+  container.into_any_element()
 }
 
 /// Render a pre-parsed markdown document to a GPUI element.
