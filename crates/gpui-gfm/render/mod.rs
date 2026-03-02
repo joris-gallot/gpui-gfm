@@ -600,12 +600,8 @@ pub struct MarkdownRenderOptions {
   /// When enabled, each leading space in a code block line is rendered
   /// with a faint dot, similar to "Show Indentation Guides" in editors.
   pub show_indentation_dots: bool,
-  /// Persistent state for text selection.
-  ///
-  /// When set, inline text becomes selectable: click-drag to select,
-  /// and the selected text is automatically copied to the clipboard on
-  /// mouse-up. The state persists across re-renders.
-  pub selection_state: Option<SelectionState>,
+  /// Internal: persistent state for text selection
+  pub(crate) selection_state: SelectionState,
 }
 
 impl MarkdownRenderOptions {
@@ -659,11 +655,6 @@ impl MarkdownRenderOptions {
     self
   }
 
-  pub fn with_selection_state(mut self, state: SelectionState) -> Self {
-    self.selection_state = Some(state);
-    self
-  }
-
   pub fn with_indentation_dots(mut self) -> Self {
     self.show_indentation_dots = true;
     self
@@ -714,9 +705,7 @@ fn render_markdown_with_previews(
   // are unique across all segments (avoids colliding IDs that would cause
   // multiple blocks to highlight simultaneously).
   options.details_state.reset_counter();
-  if let Some(sel) = &options.selection_state {
-    sel.reset_counter();
-  }
+  options.selection_state.reset_counter();
 
   let mut container = div().flex().flex_col();
   for segment in &segments {
@@ -747,9 +736,7 @@ pub fn render_parsed_markdown(
   // Reset the details ID counter so IDs are stable across re-renders.
   options.details_state.reset_counter();
   // Reset the selection text-block counter so IDs are stable.
-  if let Some(sel) = &options.selection_state {
-    sel.reset_counter();
-  }
+  options.selection_state.reset_counter();
   blocks::render_blocks(parsed.blocks(), options, 0, cx)
 }
 
@@ -1154,8 +1141,7 @@ mod tests {
 
   #[gpui::test]
   fn selection_state_renders_without_panic(cx: &mut gpui::TestAppContext) {
-    let sel = SelectionState::default();
-    let options = MarkdownRenderOptions::default().with_selection_state(sel);
+    let options = MarkdownRenderOptions::default();
     cx.update(|cx| {
       let _ = crate::render::render_markdown("Hello **bold** world.\n", &options, cx);
     });
@@ -1163,10 +1149,7 @@ mod tests {
 
   #[gpui::test]
   fn selection_state_with_links_renders(cx: &mut gpui::TestAppContext) {
-    let sel = SelectionState::default();
-    let options = MarkdownRenderOptions::default()
-      .with_selection_state(sel)
-      .with_on_link(Arc::new(|_url, _window, _cx| {}));
+    let options = MarkdownRenderOptions::default().with_on_link(Arc::new(|_url, _window, _cx| {}));
     cx.update(|cx| {
       let _ =
         crate::render::render_markdown("Click [here](https://example.com) now.\n", &options, cx);
@@ -1175,8 +1158,8 @@ mod tests {
 
   #[gpui::test]
   fn selection_state_counter_resets_on_render(cx: &mut gpui::TestAppContext) {
-    let sel = SelectionState::default();
-    let options = MarkdownRenderOptions::default().with_selection_state(sel.clone());
+    let options = MarkdownRenderOptions::default();
+    let sel = options.selection_state.clone();
     cx.update(|cx| {
       let _ = crate::render::render_markdown("Para one.\n\nPara two.\n", &options, cx);
     });
@@ -1212,10 +1195,9 @@ mod tests {
       },
     );
 
-    let sel = SelectionState::default();
-    let options = MarkdownRenderOptions::default()
-      .with_selection_state(sel.clone())
-      .with_github_code_reference_previews(Arc::new(previews));
+    let options =
+      MarkdownRenderOptions::default().with_github_code_reference_previews(Arc::new(previews));
+    let sel = options.selection_state.clone();
 
     // Source has text before and after the preview URL line.
     let source =

@@ -1,8 +1,8 @@
 //! Inline text rendering — converts `Vec<Inline>` into styled GPUI text.
 
 use gpui::{
-  AnyElement, App, Font, FontStyle, FontWeight, MouseButton, SharedString, StrikethroughStyle,
-  StyledText, TextRun, UnderlineStyle, div, prelude::*, px,
+  AnyElement, App, Font, FontStyle, FontWeight, SharedString, StrikethroughStyle, TextRun,
+  UnderlineStyle, div, prelude::*, px,
 };
 
 use crate::types::*;
@@ -89,23 +89,18 @@ fn render_inline_flat(inlines: &[Inline], options: &MarkdownRenderOptions, cx: &
 
   let shared_text: SharedString = text.into();
 
-  // If selection state is provided, wrap in SelectableText.
-  if let Some(sel) = &options.selection_state {
-    let text_id = sel.next_text_id();
-    return SelectableText::new(
-      shared_text,
-      runs,
-      Vec::new(), // no link ranges in flat path
-      sel.clone(),
-      options.on_link.clone(),
-      text_id,
-    )
-    .into_any_element();
-  }
-
-  StyledText::new(shared_text)
-    .with_runs(runs)
-    .into_any_element()
+  // Wrap in SelectableText for click-drag selection.
+  let sel = &options.selection_state;
+  let text_id = sel.next_text_id();
+  SelectableText::new(
+    shared_text,
+    runs,
+    Vec::new(), // no link ranges in flat path
+    sel.clone(),
+    options.on_link.clone(),
+    text_id,
+  )
+  .into_any_element()
 }
 
 /// Segmented path: split into text/link segments, wrap links in clickable divs.
@@ -120,80 +115,10 @@ fn render_inline_segmented(
     return div().into_any_element();
   }
 
-  // If selection state is set, merge all segments into a single SelectableText
+  // Merge all segments into a single SelectableText
   // so drag-selection can span across link boundaries.
-  if let Some(sel) = &options.selection_state {
-    return render_selectable_segmented(&segments, sel, options);
-  }
-
-  // If there's only one non-link segment, shortcut to StyledText.
-  if segments.len() == 1 {
-    if let InlineSegment::Text { text, runs } = &segments[0] {
-      let shared: SharedString = text.clone().into();
-      return StyledText::new(shared)
-        .with_runs(runs.clone())
-        .into_any_element();
-    }
-  }
-
-  let on_link = options.on_link.clone();
-
-  // Use a flex-wrap container so segments flow inline.
-  let mut container = div().flex().flex_wrap().items_baseline();
-
-  for (ix, segment) in segments.into_iter().enumerate() {
-    match segment {
-      InlineSegment::Text { text, runs } => {
-        if !text.is_empty() {
-          let shared: SharedString = text.into();
-          container = container.child(StyledText::new(shared).with_runs(runs));
-        }
-      }
-      InlineSegment::Link { text, runs, url } => {
-        if !text.is_empty() {
-          let shared: SharedString = text.into();
-          let link_id: SharedString = format!("gfm-link-{ix}").into();
-          let on_link = on_link.clone();
-          let url_clone = url.clone();
-
-          let styled = StyledText::new(shared).with_runs(runs);
-          let mut link_div = div().id(link_id).cursor_pointer().child(styled);
-
-          if let Some(handler) = on_link {
-            link_div = link_div.on_mouse_down(MouseButton::Left, move |_, window, cx| {
-              handler(&url_clone, window, cx);
-            });
-          } else {
-            // Fallback: open URL with system handler
-            let url_fallback = url;
-            link_div = link_div.on_mouse_down(MouseButton::Left, move |_, _window, cx| {
-              cx.open_url(&url_fallback);
-            });
-          }
-
-          container = container.child(link_div);
-        }
-      }
-      InlineSegment::Image {
-        url,
-        alt,
-        width,
-        height,
-      } => {
-        container = container.child(super::image::render_inline_image(
-          &url,
-          &alt,
-          width.as_deref(),
-          height.as_deref(),
-          None,
-          None,
-          options,
-        ));
-      }
-    }
-  }
-
-  container.into_any_element()
+  let sel = &options.selection_state;
+  render_selectable_segmented(&segments, sel, options)
 }
 
 /// Merge all text/link segments into a single SelectableText element.

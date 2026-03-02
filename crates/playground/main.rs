@@ -6,7 +6,7 @@ use gpui::{
 };
 use gpui_gfm::MarkdownCache;
 use gpui_gfm::github::{GithubCodeReferencePreview, GithubIssueReferenceContext};
-use gpui_gfm::render::{MarkdownRenderOptions, MarkdownTheme, RenderOverrides, SelectionState};
+use gpui_gfm::render::{MarkdownRenderOptions, MarkdownTheme, RenderOverrides};
 use input::*;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -649,22 +649,16 @@ fn main() {
               ],
             },
           );
-          cx.new(|cx| MarkdownPlayground {
-            text_input,
-            url_input,
-            rendered_source: SAMPLE_MARKDOWN.into(),
-            options: MarkdownRenderOptions {
-              theme: Some(MarkdownTheme::dark()),
-              image_base_url: Some("https://raw.githubusercontent.com/owner/repo/main".into()),
-              on_link: Some(Arc::new(|url, _window, _cx| {
+          cx.new(|cx| {
+            let options = MarkdownRenderOptions::default()
+              .with_theme(MarkdownTheme::dark())
+              .with_image_base_url("https://raw.githubusercontent.com/owner/repo/main")
+              .with_on_link(Arc::new(|url, _window, _cx| {
                 println!("[on_link] clicked: {url}");
-              })),
-              github_issue_reference_context: Some(GithubIssueReferenceContext {
-                owner: "zed-industries".into(),
-                repo: "zed".into(),
-              }),
-              github_code_reference_previews: Some(Arc::new(code_previews)),
-              overrides: RenderOverrides {
+              }))
+              .with_github_issue_context("zed-industries", "zed")
+              .with_github_code_reference_previews(Arc::new(code_previews))
+              .with_overrides(RenderOverrides {
                 heading: Some(Arc::new(|_level, el, _cx| {
                   div()
                     .border_l_2()
@@ -691,14 +685,18 @@ fn main() {
                     .into_any_element()
                 })),
                 ..Default::default()
-              },
-              selection_state: Some(SelectionState::default()),
-              show_indentation_dots: true,
-              ..Default::default()
-            },
-            focus_handle: cx.focus_handle(),
-            is_fetching: false,
-            cache: MarkdownCache::default(),
+              })
+              .with_indentation_dots();
+
+            MarkdownPlayground {
+              text_input,
+              url_input,
+              rendered_source: SAMPLE_MARKDOWN.into(),
+              options,
+              focus_handle: cx.focus_handle(),
+              is_fetching: false,
+              cache: MarkdownCache::default(),
+            }
           })
         },
       )
