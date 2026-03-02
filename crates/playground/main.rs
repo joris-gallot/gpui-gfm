@@ -4,6 +4,7 @@ use gpui::{
   App, Application, Bounds, Context, Entity, FocusHandle, Focusable, KeyBinding, MouseButton,
   SharedString, Window, WindowBounds, WindowOptions, actions, div, prelude::*, px, size,
 };
+use gpui_gfm::MarkdownCache;
 use gpui_gfm::github::{GithubCodeReferencePreview, GithubIssueReferenceContext};
 use gpui_gfm::render::{MarkdownRenderOptions, MarkdownTheme, RenderOverrides, SelectionState};
 use input::*;
@@ -265,6 +266,7 @@ struct MarkdownPlayground {
   options: MarkdownRenderOptions,
   focus_handle: FocusHandle,
   is_fetching: bool,
+  cache: MarkdownCache,
 }
 
 impl MarkdownPlayground {
@@ -464,7 +466,8 @@ impl Render for MarkdownPlayground {
   fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
     let toolbar = self.render_toolbar(cx);
     let theme = self.options.theme();
-    let rendered = gpui_gfm::render_markdown(&self.rendered_source, &self.options, cx);
+    let parsed = self.cache.get_or_parse(&self.rendered_source);
+    let rendered = gpui_gfm::render_parsed_markdown(&parsed, &self.options, cx);
 
     div()
       .key_context("Playground")
@@ -662,6 +665,7 @@ fn main() {
             },
             focus_handle: cx.focus_handle(),
             is_fetching: false,
+            cache: MarkdownCache::default(),
           })
         },
       )
