@@ -335,7 +335,7 @@ impl MarkdownPlayground {
     cx.spawn(async move |this, cx| {
       let result = std::thread::spawn(move || {
         let body = ureq::get(&raw_url).call()?.body_mut().read_to_string()?;
-        // Some READMEs redirect to another file, e.g. "packages/ai/README.md"
+        // Some READMEs redirect to another file, e.g. "packages/app/README.md"
         let body = maybe_follow_readme_redirect(&image_base_for_thread, &body)?;
         Ok::<String, Box<dyn std::error::Error + Send + Sync>>(body)
       })
@@ -498,8 +498,8 @@ impl Render for MarkdownPlayground {
   fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
     let toolbar = self.render_toolbar(cx);
     let theme = self.options.theme();
-    let parsed = self.cache.get_or_parse(&self.rendered_source);
-    let rendered = gpui_gfm::render_parsed_markdown(&parsed, &self.options, cx);
+    let rendered =
+      gpui_gfm::render_markdown_cached(&self.rendered_source, &self.options, &mut self.cache, cx);
 
     div()
       .key_context("Playground")

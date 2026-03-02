@@ -671,14 +671,39 @@ static DEFAULT_DARK_THEME: std::sync::LazyLock<MarkdownTheme> =
 
 /// Render a markdown source string to a GPUI element.
 pub fn render_markdown(source: &str, options: &MarkdownRenderOptions, cx: &App) -> AnyElement {
+  render_markdown_impl(source, options, None, cx)
+}
+
+/// Render a markdown source string to a GPUI element, with LRU caching.
+///
+/// Identical to [`render_markdown`] but reuses cached parse results when the
+/// same source string is rendered again (e.g. on every re-render of a view).
+pub fn render_markdown_cached(
+  source: &str,
+  options: &MarkdownRenderOptions,
+  cache: &mut crate::cache::MarkdownCache,
+  cx: &App,
+) -> AnyElement {
+  render_markdown_impl(source, options, Some(cache), cx)
+}
+
+fn render_markdown_impl(
+  source: &str,
+  options: &MarkdownRenderOptions,
+  cache: Option<&mut crate::cache::MarkdownCache>,
+  cx: &App,
+) -> AnyElement {
   // If code reference previews are provided, split the source at matching
   // URL lines and render each segment separately.
   if let Some(previews) = &options.github_code_reference_previews {
     if !previews.is_empty() {
-      return render_markdown_with_previews(source, previews, options, cx);
+      return render_markdown_with_previews(source, previews, options, cache, cx);
     }
   }
-  let parsed = crate::parse::parse_markdown(source);
+  let parsed = match cache {
+    Some(c) => c.get_or_parse(source),
+    None => crate::parse::parse_markdown(source),
+  };
   render_parsed_markdown(&parsed, options, cx)
 }
 
@@ -687,6 +712,7 @@ fn render_markdown_with_previews(
   source: &str,
   previews: &HashMap<Arc<str>, GithubCodeReferencePreview>,
   options: &MarkdownRenderOptions,
+  mut cache: Option<&mut crate::cache::MarkdownCache>,
   cx: &App,
 ) -> AnyElement {
   use crate::github::{MarkdownPreviewSegment, split_markdown_preview_segments};
@@ -697,7 +723,10 @@ fn render_markdown_with_previews(
     .any(|s| matches!(s, MarkdownPreviewSegment::Preview(_)));
 
   if !has_previews {
-    let parsed = crate::parse::parse_markdown(source);
+    let parsed = match cache {
+      Some(ref mut c) => c.get_or_parse(source),
+      None => crate::parse::parse_markdown(source),
+    };
     return render_parsed_markdown(&parsed, options, cx);
   }
 
@@ -712,7 +741,10 @@ fn render_markdown_with_previews(
     match segment {
       MarkdownPreviewSegment::Markdown(markdown) => {
         if !markdown.is_empty() {
-          let parsed = crate::parse::parse_markdown(markdown);
+          let parsed = match cache {
+            Some(ref mut c) => c.get_or_parse(markdown),
+            None => crate::parse::parse_markdown(markdown),
+          };
           // Use render_blocks directly — counters already reset above.
           container = container.child(blocks::render_blocks(parsed.blocks(), options, 0, cx));
         }
