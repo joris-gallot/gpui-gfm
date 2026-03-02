@@ -283,6 +283,7 @@ https://github.com/other/repo/blob/main/file.rs#L1
 | `github_issue_reference_context` | `zed-industries/zed` (auto-links `#123`) |
 | `github_code_reference_previews` | 1 preview card for `editor.rs#L10-L14` |
 | `overrides.heading` | Wraps headings with left accent border |
+| `show_indentation_dots` | `true` (dots on leading spaces in code blocks) |
 | `overrides.thematic_break` | Rainbow gradient line instead of plain gray |
 
 ---
@@ -692,6 +693,7 @@ fn main() {
                 ..Default::default()
               },
               selection_state: Some(SelectionState::default()),
+              show_indentation_dots: true,
               ..Default::default()
             },
             focus_handle: cx.focus_handle(),

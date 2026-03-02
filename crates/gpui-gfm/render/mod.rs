@@ -595,6 +595,11 @@ pub struct MarkdownRenderOptions {
   ///
   /// When a closure is set, it replaces the default built-in renderer.
   pub overrides: RenderOverrides,
+  /// Show small dots at leading whitespace positions in code blocks.
+  ///
+  /// When enabled, each leading space in a code block line is rendered
+  /// with a faint dot, similar to "Show Indentation Guides" in editors.
+  pub show_indentation_dots: bool,
   /// Persistent state for text selection.
   ///
   /// When set, inline text becomes selectable: click-drag to select,
@@ -656,6 +661,11 @@ impl MarkdownRenderOptions {
 
   pub fn with_selection_state(mut self, state: SelectionState) -> Self {
     self.selection_state = Some(state);
+    self
+  }
+
+  pub fn with_indentation_dots(mut self) -> Self {
+    self.show_indentation_dots = true;
     self
   }
 
