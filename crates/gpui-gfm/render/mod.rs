@@ -5,6 +5,7 @@ pub mod code_block;
 pub mod code_preview;
 pub mod image;
 pub mod inline;
+pub mod selectable_text;
 pub mod table;
 
 use std::collections::HashMap;
@@ -140,6 +141,187 @@ impl DetailsState {
     map.insert(id, next);
     next
   }
+}
+
+// ---------------------------------------------------------------------------
+// Text selection state
+// ---------------------------------------------------------------------------
+
+/// Currently active text selection (drag in progress or completed).
+#[derive(Clone, Debug)]
+pub struct ActiveSelection {
+  /// Which text block the selection is in.
+  pub text_id: usize,
+  /// Byte offset of the anchor (where mouse-down occurred).
+  pub anchor: usize,
+  /// Byte offset of the head (current mouse position).
+  pub head: usize,
+  /// Whether the user is currently dragging.
+  pub dragging: bool,
+}
+
+/// Persistent state for text selection across all rendered text blocks.
+///
+/// Shared via `Arc` so that mouse-event callbacks can mutate it.
+/// Works like [`DetailsState`] — create once, pass to every render call,
+/// and it retains state across re-renders.
+#[derive(Clone, Default)]
+pub struct SelectionState {
+  /// The currently active selection, if any.
+  selection: Arc<Mutex<Option<ActiveSelection>>>,
+  /// Counter for assigning unique text-block IDs during rendering.
+  counter: Arc<AtomicUsize>,
+  /// Selection highlight background colour.
+  /// Falls back to a semi-transparent blue if not set.
+  selection_color: Arc<Mutex<Option<Hsla>>>,
+}
+
+impl SelectionState {
+  /// Reset the text-block counter before a new render pass.
+  pub fn reset_counter(&self) {
+    self.counter.store(0, Ordering::Relaxed);
+  }
+
+  /// Get the next text-block ID.
+  pub fn next_text_id(&self) -> usize {
+    self.counter.fetch_add(1, Ordering::Relaxed)
+  }
+
+  /// Set the selection highlight colour.
+  pub fn set_selection_color(&self, color: Hsla) {
+    *self.selection_color.lock().unwrap() = Some(color);
+  }
+
+  /// Get the selection colour (defaults to semi-transparent blue).
+  pub fn selection_color(&self) -> Hsla {
+    self.selection_color.lock().unwrap().unwrap_or(Hsla {
+      h: 0.58,
+      s: 0.6,
+      l: 0.5,
+      a: 0.3,
+    })
+  }
+
+  /// Update the selection state.
+  pub fn update(&self, text_id: usize, anchor: usize, head: usize, dragging: bool) {
+    *self.selection.lock().unwrap() = Some(ActiveSelection {
+      text_id,
+      anchor,
+      head,
+      dragging,
+    });
+  }
+
+  /// Clear the selection.
+  pub fn clear(&self) {
+    *self.selection.lock().unwrap() = None;
+  }
+
+  /// Get the current selection state for a specific text block.
+  pub fn selection_for(&self, text_id: usize) -> Option<ActiveSelection> {
+    self
+      .selection
+      .lock()
+      .unwrap()
+      .as_ref()
+      .filter(|s| s.text_id == text_id)
+      .cloned()
+  }
+
+  /// Get the current dragging state (any text block).
+  pub fn is_dragging(&self) -> bool {
+    self
+      .selection
+      .lock()
+      .unwrap()
+      .as_ref()
+      .is_some_and(|s| s.dragging)
+  }
+
+  /// Get the normalised byte range of the current selection for a given text block.
+  ///
+  /// Returns `None` if there's no selection or the selection is in a different block.
+  pub fn selection_range_for(&self, text_id: usize, text: &str) -> Option<std::ops::Range<usize>> {
+    let sel = self.selection.lock().unwrap();
+    let active = sel.as_ref()?;
+    if active.text_id != text_id || active.anchor == active.head {
+      return None;
+    }
+    let text_len = text.len();
+    let start = clamp_to_char_boundary(text, active.anchor.min(active.head).min(text_len));
+    let end = clamp_to_char_boundary(text, active.anchor.max(active.head).min(text_len));
+    if start >= end { None } else { Some(start..end) }
+  }
+
+  /// Extract the selected text for a given text block.
+  pub fn selected_text(&self, text_id: usize, text: &str) -> Option<String> {
+    let range = self.selection_range_for(text_id, text)?;
+    text.get(range).map(|s| s.to_string())
+  }
+}
+
+/// Clamp a byte index to a valid UTF-8 char boundary.
+///
+/// If `index` falls in the middle of a multi-byte character it is rounded
+/// down to the start of that character.
+pub fn clamp_to_char_boundary(text: &str, index: usize) -> usize {
+  if index >= text.len() {
+    return text.len();
+  }
+  // Walk backward until we hit a char boundary.
+  let mut i = index;
+  while !text.is_char_boundary(i) && i > 0 {
+    i -= 1;
+  }
+  i
+}
+
+/// Apply a selection highlight to existing text runs.
+///
+/// Splits runs at selection boundaries and adds a background colour to the
+/// selected portion.
+pub fn apply_selection_to_runs(
+  runs: Vec<gpui::TextRun>,
+  selection: std::ops::Range<usize>,
+  selection_color: Hsla,
+) -> Vec<gpui::TextRun> {
+  let mut updated = Vec::new();
+  let mut offset = 0usize;
+  for run in runs {
+    let run_start = offset;
+    let run_end = offset + run.len;
+    offset = run_end;
+
+    // No overlap — keep as-is.
+    if selection.end <= run_start || selection.start >= run_end {
+      updated.push(run);
+      continue;
+    }
+
+    let overlap_start = selection.start.max(run_start);
+    let overlap_end = selection.end.min(run_end);
+
+    // Prefix before selection.
+    if overlap_start > run_start {
+      let mut prefix = run.clone();
+      prefix.len = overlap_start - run_start;
+      updated.push(prefix);
+    }
+
+    // Selected portion.
+    let mut selected = run.clone();
+    selected.len = overlap_end - overlap_start;
+    selected.background_color = Some(selection_color);
+    updated.push(selected);
+
+    // Suffix after selection.
+    if overlap_end < run_end {
+      let mut suffix = run.clone();
+      suffix.len = run_end - overlap_end;
+      updated.push(suffix);
+    }
+  }
+  updated
 }
 
 /// Theme colors for markdown rendering.
@@ -312,6 +494,12 @@ pub struct MarkdownRenderOptions {
   ///
   /// When a closure is set, it replaces the default built-in renderer.
   pub overrides: RenderOverrides,
+  /// Persistent state for text selection.
+  ///
+  /// When set, inline text becomes selectable: click-drag to select,
+  /// and the selected text is automatically copied to the clipboard on
+  /// mouse-up. The state persists across re-renders.
+  pub selection_state: Option<SelectionState>,
 }
 
 impl MarkdownRenderOptions {
@@ -365,6 +553,11 @@ impl MarkdownRenderOptions {
     self
   }
 
+  pub fn with_selection_state(mut self, state: SelectionState) -> Self {
+    self.selection_state = Some(state);
+    self
+  }
+
   /// Get the theme, falling back to dark theme default.
   pub fn theme(&self) -> &MarkdownTheme {
     self.theme.as_ref().unwrap_or(&DEFAULT_DARK_THEME)
@@ -406,13 +599,22 @@ fn render_markdown_with_previews(
     return render_parsed_markdown(&parsed, options, cx);
   }
 
+  // Reset counters ONCE for the entire document so that text-block IDs
+  // are unique across all segments (avoids colliding IDs that would cause
+  // multiple blocks to highlight simultaneously).
+  options.details_state.reset_counter();
+  if let Some(sel) = &options.selection_state {
+    sel.reset_counter();
+  }
+
   let mut container = div().flex().flex_col();
   for segment in &segments {
     match segment {
       MarkdownPreviewSegment::Markdown(markdown) => {
         if !markdown.is_empty() {
           let parsed = crate::parse::parse_markdown(markdown);
-          container = container.child(render_parsed_markdown(&parsed, options, cx));
+          // Use render_blocks directly — counters already reset above.
+          container = container.child(blocks::render_blocks(parsed.blocks(), options, 0, cx));
         }
       }
       MarkdownPreviewSegment::Preview(preview) => {
@@ -433,6 +635,10 @@ pub fn render_parsed_markdown(
 ) -> AnyElement {
   // Reset the details ID counter so IDs are stable across re-renders.
   options.details_state.reset_counter();
+  // Reset the selection text-block counter so IDs are stable.
+  if let Some(sel) = &options.selection_state {
+    sel.reset_counter();
+  }
   blocks::render_blocks(parsed.blocks(), options, 0, cx)
 }
 
@@ -513,6 +719,341 @@ mod tests {
     state.reset_counter();
     // State should persist
     assert!(state.is_open(0, false));
+  }
+
+  // --- clamp_to_char_boundary tests ---
+
+  #[test]
+  fn clamp_ascii() {
+    assert_eq!(clamp_to_char_boundary("hello", 0), 0);
+    assert_eq!(clamp_to_char_boundary("hello", 3), 3);
+    assert_eq!(clamp_to_char_boundary("hello", 5), 5);
+  }
+
+  #[test]
+  fn clamp_beyond_length() {
+    assert_eq!(clamp_to_char_boundary("hi", 10), 2);
+  }
+
+  #[test]
+  fn clamp_multibyte() {
+    let text = "aé"; // 'a' = 1 byte, 'é' = 2 bytes → total 3 bytes
+    assert_eq!(clamp_to_char_boundary(text, 0), 0);
+    assert_eq!(clamp_to_char_boundary(text, 1), 1);
+    // index 2 is in the middle of 'é' (bytes 1..3) → clamp to 1
+    assert_eq!(clamp_to_char_boundary(text, 2), 1);
+    assert_eq!(clamp_to_char_boundary(text, 3), 3);
+  }
+
+  #[test]
+  fn clamp_emoji() {
+    let text = "🦀"; // 4 bytes
+    assert_eq!(clamp_to_char_boundary(text, 0), 0);
+    assert_eq!(clamp_to_char_boundary(text, 1), 0);
+    assert_eq!(clamp_to_char_boundary(text, 2), 0);
+    assert_eq!(clamp_to_char_boundary(text, 3), 0);
+    assert_eq!(clamp_to_char_boundary(text, 4), 4);
+  }
+
+  #[test]
+  fn clamp_empty_string() {
+    assert_eq!(clamp_to_char_boundary("", 0), 0);
+    assert_eq!(clamp_to_char_boundary("", 5), 0);
+  }
+
+  // --- SelectionState tests ---
+
+  #[test]
+  fn selection_state_default() {
+    let state = SelectionState::default();
+    assert!(!state.is_dragging());
+    assert!(state.selection_for(0).is_none());
+    assert!(state.selection_range_for(0, "hello").is_none());
+  }
+
+  #[test]
+  fn selection_state_counter() {
+    let state = SelectionState::default();
+    assert_eq!(state.next_text_id(), 0);
+    assert_eq!(state.next_text_id(), 1);
+    state.reset_counter();
+    assert_eq!(state.next_text_id(), 0);
+  }
+
+  #[test]
+  fn selection_state_update_and_query() {
+    let state = SelectionState::default();
+    state.update(0, 2, 5, true);
+    assert!(state.is_dragging());
+    let sel = state.selection_for(0).unwrap();
+    assert_eq!(sel.anchor, 2);
+    assert_eq!(sel.head, 5);
+    assert!(sel.dragging);
+    // Wrong text_id → None.
+    assert!(state.selection_for(1).is_none());
+  }
+
+  #[test]
+  fn selection_state_range() {
+    let state = SelectionState::default();
+    state.update(0, 2, 5, false);
+    assert_eq!(state.selection_range_for(0, "hello world"), Some(2..5));
+    // Reversed (head < anchor) should normalise.
+    state.update(0, 5, 2, false);
+    assert_eq!(state.selection_range_for(0, "hello world"), Some(2..5));
+  }
+
+  #[test]
+  fn selection_state_empty_range() {
+    let state = SelectionState::default();
+    // anchor == head → None (no selection).
+    state.update(0, 3, 3, false);
+    assert!(state.selection_range_for(0, "hello").is_none());
+  }
+
+  #[test]
+  fn selection_state_selected_text() {
+    let state = SelectionState::default();
+    state.update(0, 6, 11, false);
+    assert_eq!(
+      state.selected_text(0, "hello world"),
+      Some("world".to_string())
+    );
+  }
+
+  #[test]
+  fn selection_state_clear() {
+    let state = SelectionState::default();
+    state.update(0, 0, 5, true);
+    assert!(state.is_dragging());
+    state.clear();
+    assert!(!state.is_dragging());
+    assert!(state.selection_for(0).is_none());
+  }
+
+  #[test]
+  fn selection_state_color_default() {
+    let state = SelectionState::default();
+    let color = state.selection_color();
+    // Default is semi-transparent blue.
+    assert!(color.a < 1.0);
+  }
+
+  #[test]
+  fn selection_state_custom_color() {
+    let state = SelectionState::default();
+    let red = Hsla {
+      h: 0.0,
+      s: 1.0,
+      l: 0.5,
+      a: 0.4,
+    };
+    state.set_selection_color(red);
+    let color = state.selection_color();
+    assert_eq!(color.h, 0.0);
+    assert_eq!(color.a, 0.4);
+  }
+
+  // --- apply_selection_to_runs tests ---
+
+  #[test]
+  fn apply_selection_no_overlap() {
+    let runs = vec![gpui::TextRun {
+      len: 5,
+      ..Default::default()
+    }];
+    let result = apply_selection_to_runs(
+      runs,
+      10..15,
+      Hsla {
+        h: 0.0,
+        s: 0.0,
+        l: 0.5,
+        a: 0.5,
+      },
+    );
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].len, 5);
+    assert!(result[0].background_color.is_none());
+  }
+
+  #[test]
+  fn apply_selection_full_overlap() {
+    let runs = vec![gpui::TextRun {
+      len: 5,
+      ..Default::default()
+    }];
+    let sel_color = Hsla {
+      h: 0.0,
+      s: 0.0,
+      l: 0.5,
+      a: 0.5,
+    };
+    let result = apply_selection_to_runs(runs, 0..5, sel_color);
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].len, 5);
+    assert!(result[0].background_color.is_some());
+  }
+
+  #[test]
+  fn apply_selection_partial_overlap_start() {
+    let runs = vec![gpui::TextRun {
+      len: 10,
+      ..Default::default()
+    }];
+    let sel_color = Hsla {
+      h: 0.0,
+      s: 0.0,
+      l: 0.5,
+      a: 0.5,
+    };
+    let result = apply_selection_to_runs(runs, 0..3, sel_color);
+    // Should split into: selected(0..3) + unselected(3..10)
+    assert_eq!(result.len(), 2);
+    assert_eq!(result[0].len, 3);
+    assert!(result[0].background_color.is_some());
+    assert_eq!(result[1].len, 7);
+    assert!(result[1].background_color.is_none());
+  }
+
+  #[test]
+  fn apply_selection_partial_overlap_middle() {
+    let runs = vec![gpui::TextRun {
+      len: 10,
+      ..Default::default()
+    }];
+    let sel_color = Hsla {
+      h: 0.0,
+      s: 0.0,
+      l: 0.5,
+      a: 0.5,
+    };
+    let result = apply_selection_to_runs(runs, 3..7, sel_color);
+    // Should split into: prefix(0..3) + selected(3..7) + suffix(7..10)
+    assert_eq!(result.len(), 3);
+    assert_eq!(result[0].len, 3);
+    assert!(result[0].background_color.is_none());
+    assert_eq!(result[1].len, 4);
+    assert!(result[1].background_color.is_some());
+    assert_eq!(result[2].len, 3);
+    assert!(result[2].background_color.is_none());
+  }
+
+  #[test]
+  fn apply_selection_across_multiple_runs() {
+    let runs = vec![
+      gpui::TextRun {
+        len: 5,
+        ..Default::default()
+      },
+      gpui::TextRun {
+        len: 5,
+        ..Default::default()
+      },
+    ];
+    let sel_color = Hsla {
+      h: 0.0,
+      s: 0.0,
+      l: 0.5,
+      a: 0.5,
+    };
+    let result = apply_selection_to_runs(runs, 3..8, sel_color);
+    // Run 0 (0..5): prefix(0..3) + selected(3..5)
+    // Run 1 (5..10): selected(5..8) + suffix(8..10)
+    assert_eq!(result.len(), 4);
+    assert_eq!(result[0].len, 3);
+    assert!(result[0].background_color.is_none());
+    assert_eq!(result[1].len, 2);
+    assert!(result[1].background_color.is_some());
+    assert_eq!(result[2].len, 3);
+    assert!(result[2].background_color.is_some());
+    assert_eq!(result[3].len, 2);
+    assert!(result[3].background_color.is_none());
+  }
+
+  // --- Selection-aware rendering tests (require gpui::test) ---
+
+  #[gpui::test]
+  fn selection_state_renders_without_panic(cx: &mut gpui::TestAppContext) {
+    let sel = SelectionState::default();
+    let options = MarkdownRenderOptions::default().with_selection_state(sel);
+    cx.update(|cx| {
+      let _ = crate::render::render_markdown("Hello **bold** world.\n", &options, cx);
+    });
+  }
+
+  #[gpui::test]
+  fn selection_state_with_links_renders(cx: &mut gpui::TestAppContext) {
+    let sel = SelectionState::default();
+    let options = MarkdownRenderOptions::default()
+      .with_selection_state(sel)
+      .with_on_link(Arc::new(|_url, _window, _cx| {}));
+    cx.update(|cx| {
+      let _ =
+        crate::render::render_markdown("Click [here](https://example.com) now.\n", &options, cx);
+    });
+  }
+
+  #[gpui::test]
+  fn selection_state_counter_resets_on_render(cx: &mut gpui::TestAppContext) {
+    let sel = SelectionState::default();
+    let options = MarkdownRenderOptions::default().with_selection_state(sel.clone());
+    cx.update(|cx| {
+      let _ = crate::render::render_markdown("Para one.\n\nPara two.\n", &options, cx);
+    });
+    // After render, the counter was incremented for each text block.
+    let count_after_first = sel.next_text_id();
+    // Reset and render again — counter should restart at 0.
+    sel.reset_counter();
+    cx.update(|cx| {
+      let _ = crate::render::render_markdown("Para one.\n\nPara two.\n", &options, cx);
+    });
+    let count_after_second = sel.next_text_id();
+    // Both renders should produce the same number of text blocks.
+    assert_eq!(count_after_first, count_after_second);
+  }
+
+  #[gpui::test]
+  fn selection_ids_unique_across_preview_segments(cx: &mut gpui::TestAppContext) {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    let preview_url: Arc<str> = "https://github.com/owner/repo/blob/abc123/file.rs#L1-L3".into();
+    let mut previews = HashMap::new();
+    previews.insert(
+      preview_url.clone(),
+      crate::github::GithubCodeReferencePreview {
+        url: preview_url,
+        repo: "owner/repo".into(),
+        path: "file.rs".into(),
+        reference: "abc123".into(),
+        start_line: 1,
+        end_line: 3,
+        snippets: vec!["fn main() {}".into()],
+      },
+    );
+
+    let sel = SelectionState::default();
+    let options = MarkdownRenderOptions::default()
+      .with_selection_state(sel.clone())
+      .with_github_code_reference_previews(Arc::new(previews));
+
+    // Source has text before and after the preview URL line.
+    let source =
+      "Para before.\n\nhttps://github.com/owner/repo/blob/abc123/file.rs#L1-L3\n\nPara after.\n";
+
+    cx.update(|cx| {
+      let _ = crate::render::render_markdown(source, &options, cx);
+    });
+
+    // There are 2 text blocks (one per markdown segment), each should have
+    // a unique text_id. The next_text_id call tells us the counter reached
+    // at least 2.
+    let next = sel.next_text_id();
+    assert!(
+      next >= 2,
+      "Expected at least 2 unique text_ids across segments, got {next}"
+    );
   }
 
   // --- Render override tests (require gpui::test) ---

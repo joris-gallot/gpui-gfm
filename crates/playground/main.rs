@@ -5,7 +5,7 @@ use gpui::{
   SharedString, Window, WindowBounds, WindowOptions, actions, div, prelude::*, px, size,
 };
 use gpui_gfm::github::{GithubCodeReferencePreview, GithubIssueReferenceContext};
-use gpui_gfm::render::{MarkdownRenderOptions, MarkdownTheme, RenderOverrides};
+use gpui_gfm::render::{MarkdownRenderOptions, MarkdownTheme, RenderOverrides, SelectionState};
 use input::*;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -657,6 +657,7 @@ fn main() {
                 })),
                 ..Default::default()
               },
+              selection_state: Some(SelectionState::default()),
               ..Default::default()
             },
             focus_handle: cx.focus_handle(),

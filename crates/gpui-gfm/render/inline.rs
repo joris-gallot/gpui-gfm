@@ -8,6 +8,7 @@ use gpui::{
 use crate::types::*;
 
 use super::MarkdownRenderOptions;
+use super::selectable_text::{LinkRange, SelectableText};
 
 /// A segment of inline content — either plain text, a clickable link, or an image.
 #[derive(Debug)]
@@ -87,6 +88,21 @@ fn render_inline_flat(inlines: &[Inline], options: &MarkdownRenderOptions, cx: &
   }
 
   let shared_text: SharedString = text.into();
+
+  // If selection state is provided, wrap in SelectableText.
+  if let Some(sel) = &options.selection_state {
+    let text_id = sel.next_text_id();
+    return SelectableText::new(
+      shared_text,
+      runs,
+      Vec::new(), // no link ranges in flat path
+      sel.clone(),
+      options.on_link.clone(),
+      text_id,
+    )
+    .into_any_element();
+  }
+
   StyledText::new(shared_text)
     .with_runs(runs)
     .into_any_element()
@@ -102,6 +118,12 @@ fn render_inline_segmented(
 
   if segments.is_empty() {
     return div().into_any_element();
+  }
+
+  // If selection state is set, merge all segments into a single SelectableText
+  // so drag-selection can span across link boundaries.
+  if let Some(sel) = &options.selection_state {
+    return render_selectable_segmented(&segments, sel, options);
   }
 
   // If there's only one non-link segment, shortcut to StyledText.
@@ -172,6 +194,69 @@ fn render_inline_segmented(
   }
 
   container.into_any_element()
+}
+
+/// Merge all text/link segments into a single SelectableText element.
+///
+/// This allows drag-selection to span across link boundaries seamlessly.
+fn render_selectable_segmented(
+  segments: &[InlineSegment],
+  sel: &super::SelectionState,
+  options: &MarkdownRenderOptions,
+) -> AnyElement {
+  let mut full_text = String::new();
+  let mut all_runs: Vec<TextRun> = Vec::new();
+  let mut link_ranges: Vec<LinkRange> = Vec::new();
+
+  for segment in segments {
+    match segment {
+      InlineSegment::Text { text, runs } => {
+        if !text.is_empty() {
+          let offset = full_text.len();
+          full_text.push_str(text);
+          // Shift runs to the correct offset (runs are segment-local).
+          for run in runs {
+            let _ = offset; // runs use `len` not absolute offsets — just append.
+            all_runs.push(run.clone());
+          }
+        }
+      }
+      InlineSegment::Link { text, runs, url } => {
+        if !text.is_empty() {
+          let start = full_text.len();
+          full_text.push_str(text);
+          let end = full_text.len();
+          link_ranges.push(LinkRange {
+            range: start..end,
+            url: url.clone(),
+          });
+          for run in runs {
+            all_runs.push(run.clone());
+          }
+        }
+      }
+      InlineSegment::Image { .. } => {
+        // Images aren't text — skip for now.
+        // They would be rendered separately outside the SelectableText.
+      }
+    }
+  }
+
+  if full_text.is_empty() {
+    return div().into_any_element();
+  }
+
+  let text_id = sel.next_text_id();
+  let shared: SharedString = full_text.into();
+  SelectableText::new(
+    shared,
+    all_runs,
+    link_ranges,
+    sel.clone(),
+    options.on_link.clone(),
+    text_id,
+  )
+  .into_any_element()
 }
 
 /// Collect inline content into a list of text/link segments.
