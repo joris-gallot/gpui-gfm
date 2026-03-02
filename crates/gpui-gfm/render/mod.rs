@@ -147,6 +147,17 @@ impl DetailsState {
 // Text selection state
 // ---------------------------------------------------------------------------
 
+/// Selection granularity — how mouse-down click count maps to selection extent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelectionMode {
+  /// Single click — character-level selection.
+  Char,
+  /// Double click — word-level selection.
+  Word,
+  /// Triple click — line-level selection.
+  Line,
+}
+
 /// Currently active text selection (drag in progress or completed).
 #[derive(Clone, Debug)]
 pub struct ActiveSelection {
@@ -158,6 +169,11 @@ pub struct ActiveSelection {
   pub head: usize,
   /// Whether the user is currently dragging.
   pub dragging: bool,
+  /// Selection granularity (char / word / line).
+  pub mode: SelectionMode,
+  /// The initially-selected range from the click point (word or line range).
+  /// Used to keep the anchor range stable while extending during drag.
+  pub initial_range: Option<std::ops::Range<usize>>,
 }
 
 /// Persistent state for text selection across all rendered text blocks.
@@ -204,11 +220,40 @@ impl SelectionState {
 
   /// Update the selection state.
   pub fn update(&self, text_id: usize, anchor: usize, head: usize, dragging: bool) {
+    let mut sel = self.selection.lock().unwrap();
+    // Preserve existing mode + initial_range when just extending.
+    let (mode, initial_range) = sel
+      .as_ref()
+      .filter(|s| s.text_id == text_id)
+      .map(|s| (s.mode, s.initial_range.clone()))
+      .unwrap_or((SelectionMode::Char, None));
+    *sel = Some(ActiveSelection {
+      text_id,
+      anchor,
+      head,
+      dragging,
+      mode,
+      initial_range,
+    });
+  }
+
+  /// Update the selection state with explicit mode and initial range.
+  pub fn update_with_mode(
+    &self,
+    text_id: usize,
+    anchor: usize,
+    head: usize,
+    dragging: bool,
+    mode: SelectionMode,
+    initial_range: Option<std::ops::Range<usize>>,
+  ) {
     *self.selection.lock().unwrap() = Some(ActiveSelection {
       text_id,
       anchor,
       head,
       dragging,
+      mode,
+      initial_range,
     });
   }
 
@@ -274,6 +319,62 @@ pub fn clamp_to_char_boundary(text: &str, index: usize) -> usize {
     i -= 1;
   }
   i
+}
+
+/// Find the byte range of the word at the given byte index.
+///
+/// A "word" is a contiguous run of alphanumeric/underscore characters.
+/// If the index is on a non-word character the range covers that single character.
+pub fn word_range_at(text: &str, index: usize) -> std::ops::Range<usize> {
+  let index = clamp_to_char_boundary(text, index.min(text.len()));
+  if index >= text.len() {
+    return text.len()..text.len();
+  }
+
+  let ch = text[index..].chars().next().unwrap();
+  let is_word_char = |c: char| c.is_alphanumeric() || c == '_';
+
+  if is_word_char(ch) {
+    // Scan backward.
+    let mut start = index;
+    while start > 0 {
+      let prev = clamp_to_char_boundary(text, start - 1);
+      if prev == start {
+        break;
+      }
+      if text[prev..].chars().next().map_or(false, is_word_char) {
+        start = prev;
+      } else {
+        break;
+      }
+    }
+    // Scan forward.
+    let mut end = index;
+    while end < text.len() {
+      let c = text[end..].chars().next().unwrap();
+      if is_word_char(c) {
+        end += c.len_utf8();
+      } else {
+        break;
+      }
+    }
+    start..end
+  } else {
+    // Non-word character — select just that character.
+    index..(index + ch.len_utf8())
+  }
+}
+
+/// Find the byte range of the line at the given byte index.
+///
+/// A "line" runs from the previous `\n` (exclusive) to the next `\n` (inclusive of content, exclusive of the newline itself).
+pub fn line_range_at(text: &str, index: usize) -> std::ops::Range<usize> {
+  let index = index.min(text.len());
+  let start = text[..index].rfind('\n').map_or(0, |pos| pos + 1);
+  let end = text[index..]
+    .find('\n')
+    .map_or(text.len(), |pos| index + pos);
+  start..end
 }
 
 /// Apply a selection highlight to existing text runs.
@@ -969,6 +1070,74 @@ mod tests {
     assert!(result[2].background_color.is_some());
     assert_eq!(result[3].len, 2);
     assert!(result[3].background_color.is_none());
+  }
+
+  // --- word_range_at tests ---
+
+  #[test]
+  fn word_range_simple() {
+    assert_eq!(word_range_at("hello world", 0), 0..5);
+    assert_eq!(word_range_at("hello world", 2), 0..5);
+    assert_eq!(word_range_at("hello world", 4), 0..5);
+    assert_eq!(word_range_at("hello world", 6), 6..11);
+  }
+
+  #[test]
+  fn word_range_on_space() {
+    // On the space between words → selects just the space.
+    assert_eq!(word_range_at("hello world", 5), 5..6);
+  }
+
+  #[test]
+  fn word_range_with_underscore() {
+    assert_eq!(word_range_at("foo_bar baz", 2), 0..7);
+  }
+
+  #[test]
+  fn word_range_at_end() {
+    assert_eq!(word_range_at("hello", 5), 5..5);
+  }
+
+  #[test]
+  fn word_range_multibyte() {
+    // "café lait" — é is 2 bytes.
+    let text = "café lait";
+    assert_eq!(word_range_at(text, 0), 0..5); // "café"
+    assert_eq!(word_range_at(text, 6), 6..10); // "lait"
+  }
+
+  #[test]
+  fn word_range_punctuation() {
+    // Punctuation is a single non-word character.
+    assert_eq!(word_range_at("a.b", 1), 1..2); // just "."
+  }
+
+  // --- line_range_at tests ---
+
+  #[test]
+  fn line_range_single_line() {
+    assert_eq!(line_range_at("hello world", 3), 0..11);
+  }
+
+  #[test]
+  fn line_range_multi_line() {
+    let text = "first\nsecond\nthird";
+    assert_eq!(line_range_at(text, 0), 0..5); // "first"
+    assert_eq!(line_range_at(text, 3), 0..5); // still "first"
+    assert_eq!(line_range_at(text, 6), 6..12); // "second"
+    assert_eq!(line_range_at(text, 13), 13..18); // "third"
+  }
+
+  #[test]
+  fn line_range_at_newline() {
+    // Index at the newline itself → belongs to the first line (ends before \n).
+    let text = "abc\ndef";
+    assert_eq!(line_range_at(text, 3), 0..3); // at the \n → line "abc"
+  }
+
+  #[test]
+  fn line_range_at_end() {
+    assert_eq!(line_range_at("abc\n", 4), 4..4); // empty last line
   }
 
   // --- Selection-aware rendering tests (require gpui::test) ---

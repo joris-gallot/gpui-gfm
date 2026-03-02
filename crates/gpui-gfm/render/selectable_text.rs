@@ -12,7 +12,10 @@ use gpui::{
   MouseMoveEvent, MouseUpEvent, SharedString, StyledText, TextRun, Window,
 };
 
-use super::{LinkHandlerFn, SelectionState, apply_selection_to_runs, clamp_to_char_boundary};
+use super::{
+  LinkHandlerFn, SelectionMode, SelectionState, apply_selection_to_runs, clamp_to_char_boundary,
+  line_range_at, word_range_at,
+};
 
 /// A link range within the text.
 #[derive(Clone, Debug)]
@@ -164,7 +167,7 @@ impl Element for SelectableText {
       }
     }
 
-    // Mouse-down: set the selection anchor.
+    // Mouse-down: set the selection anchor (single click), select word (double), select line (triple).
     let text_for_down = text.clone();
     window.on_mouse_event({
       let hitbox = hitbox.clone();
@@ -182,13 +185,53 @@ impl Element for SelectableText {
           .index_for_position(event.position)
           .unwrap_or_else(|ix| ix);
         let index = clamp_to_char_boundary(text_for_down.as_ref(), index.min(text_len));
-        selection_state.update(text_id, index, index, true);
+
+        match event.click_count {
+          2 => {
+            // Double click → select word.
+            let range = word_range_at(text_for_down.as_ref(), index);
+            selection_state.update_with_mode(
+              text_id,
+              range.start,
+              range.end,
+              true,
+              SelectionMode::Word,
+              Some(range),
+            );
+          }
+          3 => {
+            // Triple click → select line.
+            let range = line_range_at(text_for_down.as_ref(), index);
+            selection_state.update_with_mode(
+              text_id,
+              range.start,
+              range.end,
+              true,
+              SelectionMode::Line,
+              Some(range),
+            );
+          }
+          _ => {
+            // Single click → character-level anchor.
+            selection_state.update_with_mode(
+              text_id,
+              index,
+              index,
+              true,
+              SelectionMode::Char,
+              None,
+            );
+          }
+        }
+
         window.refresh();
         cx.stop_propagation();
       }
     });
 
     // Mouse-move: extend the selection while dragging.
+    // For word/line mode, extend to the full word/line at the cursor position
+    // while keeping the original anchor word/line intact.
     let text_for_move = text.clone();
     window.on_mouse_event({
       let selection_state = selection_state.clone();
@@ -204,7 +247,32 @@ impl Element for SelectableText {
               .index_for_position(event.position)
               .unwrap_or_else(|ix| ix);
             let index = clamp_to_char_boundary(text_for_move.as_ref(), index.min(text_len));
-            selection_state.update(text_id, active.anchor, index, true);
+
+            let (new_anchor, new_head) = match active.mode {
+              SelectionMode::Word => {
+                let initial = active.initial_range.as_ref().unwrap();
+                let current_word = word_range_at(text_for_move.as_ref(), index);
+                if index < initial.start {
+                  // Dragging before initial word → anchor at end of initial, head at start of current.
+                  (initial.end, current_word.start)
+                } else {
+                  // Dragging after or within initial word → anchor at start of initial, head at end of current.
+                  (initial.start, current_word.end)
+                }
+              }
+              SelectionMode::Line => {
+                let initial = active.initial_range.as_ref().unwrap();
+                let current_line = line_range_at(text_for_move.as_ref(), index);
+                if index < initial.start {
+                  (initial.end, current_line.start)
+                } else {
+                  (initial.start, current_line.end)
+                }
+              }
+              SelectionMode::Char => (active.anchor, index),
+            };
+
+            selection_state.update(text_id, new_anchor, new_head, true);
             window.refresh();
           }
         }
@@ -235,8 +303,31 @@ impl Element for SelectableText {
           .unwrap_or_else(|ix| ix);
         let index = clamp_to_char_boundary(text_for_up.as_ref(), index.min(text_len));
 
+        // Snap to word/line boundaries — same logic as mouse-move.
+        let (final_anchor, final_head) = match active.mode {
+          SelectionMode::Word => {
+            let initial = active.initial_range.as_ref().unwrap();
+            let current_word = word_range_at(text_for_up.as_ref(), index);
+            if index < initial.start {
+              (initial.end, current_word.start)
+            } else {
+              (initial.start, current_word.end)
+            }
+          }
+          SelectionMode::Line => {
+            let initial = active.initial_range.as_ref().unwrap();
+            let current_line = line_range_at(text_for_up.as_ref(), index);
+            if index < initial.start {
+              (initial.end, current_line.start)
+            } else {
+              (initial.start, current_line.end)
+            }
+          }
+          SelectionMode::Char => (active.anchor, index),
+        };
+
         // Stop dragging.
-        selection_state.update(text_id, active.anchor, index, false);
+        selection_state.update(text_id, final_anchor, final_head, false);
 
         // Check if there's a non-empty selection.
         if let Some(selected) = selection_state.selected_text(text_id, text_for_copy.as_ref()) {
