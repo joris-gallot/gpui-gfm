@@ -10,6 +10,7 @@ use gpui::{
 use crate::github::{GithubCodeReferencePreview, short_github_reference};
 
 use super::MarkdownRenderOptions;
+use super::code_block::{CodeBlockText, INDENT_DOT_OPACITY};
 
 /// Render a code reference preview as a card element.
 pub fn render_code_reference_card(
@@ -46,61 +47,64 @@ pub fn render_code_reference_card(
     ..Default::default()
   };
 
-  let mut snippet_rows = div().flex().flex_col().gap(px(2.0));
+  // Build snippet body: line-number gutter + code text (with optional indentation dots).
+  let code_text: SharedString = preview.snippets.join("\n").into();
+
+  // Line number gutter.
+  let mut gutter = div()
+    .flex()
+    .flex_col()
+    .flex_shrink_0()
+    .gap(px(2.0))
+    .min_w(px(28.0));
 
   if preview.snippets.is_empty() {
-    snippet_rows = snippet_rows.child(
+    gutter = gutter.child(
       div()
-        .flex()
-        .items_center()
-        .gap_2()
-        .child(
-          div()
-            .text_xs()
-            .font_weight(FontWeight::MEDIUM)
-            .text_color(theme.muted_foreground)
-            .child(preview.start_line.to_string()),
-        )
-        .child(
-          div()
-            .font(code_font.clone())
-            .text_sm()
-            .whitespace_nowrap()
-            .text_color(theme.foreground)
-            .child(""),
-        ),
+        .text_xs()
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(theme.muted_foreground)
+        .child(preview.start_line.to_string()),
     );
   } else {
-    for (offset, snippet) in preview.snippets.iter().enumerate() {
+    for (offset, _) in preview.snippets.iter().enumerate() {
       let line_number = preview.start_line + offset;
-      let snippet_text: SharedString = snippet.to_string().into();
-      snippet_rows = snippet_rows.child(
+      gutter = gutter.child(
         div()
           .flex()
-          .items_center()
-          .gap_2()
-          .child(
-            div()
-              .flex()
-              .justify_end()
-              .text_xs()
-              .font_weight(FontWeight::MEDIUM)
-              .text_color(theme.muted_foreground)
-              .min_w(px(28.0))
-              .flex_shrink_0()
-              .child(line_number.to_string()),
-          )
-          .child(
-            div()
-              .font(code_font.clone())
-              .text_sm()
-              .whitespace_nowrap()
-              .text_color(theme.foreground)
-              .child(snippet_text),
-          ),
+          .justify_end()
+          .text_xs()
+          .font_weight(FontWeight::MEDIUM)
+          .text_color(theme.muted_foreground)
+          .child(line_number.to_string()),
       );
     }
   }
+
+  // Code column — uses CodeBlockText for indentation dots when enabled.
+  let code_child: gpui::AnyElement = if options.show_indentation_dots {
+    let dot_color = theme.muted_foreground.opacity(INDENT_DOT_OPACITY);
+    CodeBlockText::new(code_text, dot_color).into_any_element()
+  } else {
+    div()
+      .font(code_font.clone())
+      .text_sm()
+      .whitespace_nowrap()
+      .text_color(theme.foreground)
+      .child(code_text)
+      .into_any_element()
+  };
+
+  let snippet_body = div().flex().gap_2().child(gutter).child(
+    div()
+      .flex_1()
+      .min_w_0()
+      .font(code_font)
+      .text_sm()
+      .whitespace_nowrap()
+      .text_color(theme.foreground)
+      .child(code_child),
+  );
 
   // Build the card.
   div()
@@ -157,9 +161,10 @@ pub fn render_code_reference_card(
         .max_h(px(400.0))
         .overflow_scroll()
         .px(px(12.0))
-        .py(px(6.0))
+        .pt(px(8.0))
+        .pb(px(8.0))
         .bg(theme.background)
-        .child(snippet_rows),
+        .child(snippet_body),
     )
     .into_any_element()
 }

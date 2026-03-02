@@ -98,7 +98,7 @@ def fibonacci(n: int) -> int:
     return fibonacci(n - 1) + fibonacci(n - 2)
 ```
 
-Long code block (>10 lines → vertical scroll):
+Long code block:
 
 ```rust
 use std::collections::HashMap;

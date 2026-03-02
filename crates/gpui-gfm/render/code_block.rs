@@ -18,7 +18,7 @@ const CODE_BLOCK_PADDING_BOTTOM_PX: f32 = 8.0;
 
 // Indentation dots
 const INDENT_DOT_SIZE_PX: f32 = 2.0;
-const INDENT_DOT_OPACITY: f32 = 0.45;
+pub(crate) const INDENT_DOT_OPACITY: f32 = 0.45;
 const INDENT_DOT_MIN_SPACING_PX: f32 = 5.0;
 const INDENT_DOT_MAX_RENDER_COUNT: usize = 600;
 const INDENT_DOT_DISABLE_ABOVE_TEXT_LEN: usize = 20_000;
@@ -183,7 +183,7 @@ fn expand_tabs(text: &str) -> String {
 // ---------------------------------------------------------------------------
 
 /// A text element that paints faint dots at leading-space positions in code.
-struct CodeBlockText {
+pub(crate) struct CodeBlockText {
   text: SharedString,
   styled_text: StyledText,
   dot_indices: Vec<usize>,
@@ -191,7 +191,7 @@ struct CodeBlockText {
 }
 
 impl CodeBlockText {
-  fn new(text: SharedString, dot_color: Hsla) -> Self {
+  pub(crate) fn new(text: SharedString, dot_color: Hsla) -> Self {
     let dot_indices = collect_indentation_dot_indices(text.as_ref());
     let styled_text = StyledText::new(text.clone());
     Self {
