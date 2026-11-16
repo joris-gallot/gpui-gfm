@@ -12,5 +12,5 @@ gpui_platform = { git = "https://github.com/zed-industries/zed", features = [
   "font-kit",
 ] }
 core-text = "=21.0.0"
-comrak = "0.50"
+comrak = "0.59.0"
 tl = "0.7"
